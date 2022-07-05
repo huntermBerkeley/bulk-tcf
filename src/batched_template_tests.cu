@@ -30,10 +30,13 @@
 #include <bitset>
 
 
-#include "include/templated_vqf.cuh"
+#include "include/cooperative_templated_vqf.cuh"
 #include "include/metadata.cuh"
 
 #include <openssl/rand.h>
+
+
+#define COUNTING_CYCLES 1
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
@@ -61,7 +64,7 @@ __global__ void check_hits(bool * hits, uint64_t * misses, uint64_t nitems){
 }
 
 template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper>
-__host__ std::chrono::duration<double> split_insert_timing(templated_vqf<Key, Val, Wrapper> * my_vqf, uint64_t * reference_vals, key_val_pair<Key, Val, Wrapper> * vals, uint64_t nvals, uint64_t * misses){
+__host__ std::chrono::duration<double> split_insert_timing(templated_vqf<Key, Val, Wrapper> * my_vqf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * keys, uint64_t nvals, uint64_t * misses){
 
 
 	uint64_t num_blocks = my_vqf->get_num_blocks();
@@ -72,7 +75,7 @@ __host__ std::chrono::duration<double> split_insert_timing(templated_vqf<Key, Va
 
 	auto start = std::chrono::high_resolution_clock::now();
 
-	my_vqf->attach_lossy_buffers(reference_vals, vals, nvals, num_blocks);
+	my_vqf->attach_lossy_buffers(large_keys, keys, nvals, num_blocks);
 
 
 	cudaDeviceSynchronize();
@@ -118,9 +121,67 @@ __host__ std::chrono::duration<double> split_insert_timing(templated_vqf<Key, Va
 }
 
 
+template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper>
+__host__ std::chrono::duration<double> split_insert_timing_cycles(templated_vqf<Key, Val, Wrapper> * my_vqf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * vals, uint64_t nvals, uint64_t * misses, uint64_t * cycles, uint64_t * num_warps){
+
+
+	uint64_t num_blocks = my_vqf->get_num_blocks();
+
+	uint64_t num_teams = my_vqf->get_num_teams();
+
+	cudaDeviceSynchronize();
+
+	auto start = std::chrono::high_resolution_clock::now();
+
+	my_vqf->attach_lossy_buffers_cycles(large_keys, vals, nvals, num_blocks, cycles, num_warps);
+
+
+	cudaDeviceSynchronize();
+	
+	gpuErrchk( cudaPeekAtLastError() );
+
+
+	auto midpoint = std::chrono::high_resolution_clock::now();
+
+
+	my_vqf->bulk_insert_cycles(misses, cycles, num_teams, num_warps);
+	
+
+	cudaDeviceSynchronize();
+
+	gpuErrchk( cudaPeekAtLastError() );
+	//and insert
+
+	auto end = std::chrono::high_resolution_clock::now();
+
+
+	std::chrono::duration<double> attach_diff = midpoint-start;
+  	std::chrono::duration<double> insert_diff = end-midpoint;	
+  	std::chrono::duration<double> diff = end-start;
+
+
+
+  	std::cout << "attached in " << attach_diff.count() << ", inserted in " << insert_diff.count() << ".\n";
+
+  	std::cout << "Inserted " << nvals << " in " << diff.count() << " seconds\n";
+
+  	printf("Inserts per second: %f\n", nvals/diff.count());
+
+  	printf("Misses %llu\n", misses[0]);
+
+  	cudaDeviceSynchronize();
+
+  	misses[0] = 0;
+
+  	cudaDeviceSynchronize();
+
+  	return diff;
+}
+
+
 
 template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper>
-__host__ std::chrono::duration<double> bulk_query_timing(templated_vqf<Key, Val, Wrapper> * my_vqf, uint64_t * reference_vals, key_val_pair<Key, Val, Wrapper> * vals, uint64_t nvals, uint64_t * misses){
+__host__ std::chrono::duration<double> bulk_query_timing(templated_vqf<Key, Val, Wrapper> * my_vqf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * keys, uint64_t nvals, uint64_t * misses){
 
 
 
@@ -139,7 +200,7 @@ __host__ std::chrono::duration<double> bulk_query_timing(templated_vqf<Key, Val,
 
 
 	
-	my_vqf->attach_lossy_buffers(reference_vals, vals, nvals, num_blocks);
+	my_vqf->attach_lossy_buffers(large_keys, keys, nvals, num_blocks);
 	my_vqf->bulk_query(hits, num_teams);
 
 	cudaDeviceSynchronize();
@@ -177,7 +238,7 @@ __host__ std::chrono::duration<double> bulk_query_timing(templated_vqf<Key, Val,
 
 
 template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper>
-__host__ std::chrono::duration<double> fp_timing(templated_vqf<Key, Val, Wrapper> * my_vqf, uint64_t * reference_vals, key_val_pair<Key, Val, Wrapper> * vals, uint64_t nvals, uint64_t * misses){
+__host__ std::chrono::duration<double> fp_timing(templated_vqf<Key, Val, Wrapper> * my_vqf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * keys, uint64_t nvals, uint64_t * misses){
 
 
 
@@ -197,7 +258,7 @@ __host__ std::chrono::duration<double> fp_timing(templated_vqf<Key, Val, Wrapper
 
 
 	
-	my_vqf->attach_lossy_buffers(reference_vals, vals, nvals, num_blocks);
+	my_vqf->attach_lossy_buffers(large_keys, keys, nvals, num_blocks);
 	my_vqf->bulk_query(hits, num_teams);
 
 	cudaDeviceSynchronize();
@@ -377,46 +438,38 @@ int main(int argc, char** argv) {
 	printf("Starting test with %d bits, %llu items inserted in %d batches of %d.\n", nbits, nitems, num_batches, items_per_batch);
 
 
+	//swap this to remainder type
 	using key_type = uint16_t;
 	using main_data_type = key_val_pair<key_type>;
 
-	uint64_t * val_references;
-	uint64_t * dev_val_references;
+	uint64_t * keys;
+	uint64_t * dev_keys;
 
 
-	main_data_type * vals;
-	main_data_type * dev_vals;
+	//main_data_type * vals;
+	main_data_type * short_keys;
 
 
-	val_references = load_main_data<uint64_t>(nitems);
+	//comment this out
+	keys = load_main_data<uint64_t>(nitems);
 
-	vals = load_main_data<main_data_type>(nitems);
+	//keys = load_main_data<main_data_type>(nitems);
 
 
-	uint64_t * fp_val_references;
+	uint64_t * fp_keys;
 
-	main_data_type * fp_vals;
+	//main_data_type * fp_vals;
 
 	//generate fp data to see comparison with true inserts
-	fp_vals = load_alt_data<main_data_type>(nitems);
-
-	fp_val_references = load_alt_data<uint64_t>(nitems);
-
-	// vals = (uint64_t*) malloc(nitems*sizeof(vals[0]));
-
-	// RAND_bytes((unsigned char *)vals, sizeof(*vals) * nitems);
-
-
-	// other_vals = (uint64_t*) malloc(nitems*sizeof(other_vals[0]));
-
-	// RAND_bytes((unsigned char *)other_vals, sizeof(*other_vals) * nitems);
+	fp_keys = load_alt_data<uint64_t>(nitems);
 
 
 
 
-	cudaMalloc((void ** )& dev_vals, items_per_batch*sizeof(main_data_type));
+	
+	cudaMalloc((void ** )& short_keys, items_per_batch*sizeof(main_data_type));
 
-	cudaMalloc((void ** )& dev_val_references, items_per_batch*sizeof(uint64_t));
+	cudaMalloc((void ** )& dev_keys, items_per_batch*sizeof(uint64_t));
 
 	//cudaMemcpy(dev_vals, vals, nitems * sizeof(vals[0]), cudaMemcpyHostToDevice);
 
@@ -440,6 +493,31 @@ int main(int argc, char** argv) {
 	cudaMallocManaged((void **)& misses, sizeof(uint64_t));
 
 	misses[0] = 0;
+
+	#ifdef COUNTING_CYCLES
+
+	uint64_t * cycles;
+
+	cudaMallocManaged((void**)&cycles, 8*sizeof(uint64_t));
+
+	cycles[0] = 0;
+	cycles[1] = 0;
+	cycles[2] = 0;
+	cycles[3] = 0;
+	cycles[4] = 0;
+	cycles[5] = 0;
+	cycles[6] = 0;
+	cycles[7] = 0;
+
+
+	uint64_t * num_warps;
+
+	cudaMallocManaged((void**)&num_warps, 6*sizeof(double));
+
+	cudaDeviceSynchronize();
+
+
+	#endif
 
 
 	//change the way vqf is built to better suit test and use cases? TODO with active reconstruction for exact values / struct support
@@ -489,39 +567,55 @@ int main(int argc, char** argv) {
 
 		//prep dev_vals for this round
 
-		cudaMemcpy(dev_val_references, val_references + start, items_to_insert*sizeof(uint64_t), cudaMemcpyHostToDevice);
+		cudaMemcpy(dev_keys, keys + start, items_to_insert*sizeof(uint64_t), cudaMemcpyHostToDevice);
 
-		cudaMemcpy(dev_vals, vals + start, items_to_insert*sizeof(main_data_type), cudaMemcpyHostToDevice);
+		//cudaMemcpy(dev_vals, vals + start, items_to_insert*sizeof(main_data_type), cudaMemcpyHostToDevice);
 
 		cudaDeviceSynchronize();
 
 		//launch inserts
-		insert_diff[batch] = split_insert_timing<key_type>(vqf, dev_val_references, dev_vals, items_to_insert, misses);
 
+		#ifdef COUNTING_CYCLES
+
+		if (batch == 0){
+			insert_diff[batch] = split_insert_timing_cycles<key_type>(vqf, dev_keys, short_keys, items_to_insert, misses, cycles, num_warps);
+
+		} else {
+			insert_diff[batch] = split_insert_timing<key_type>(vqf, dev_keys, short_keys, items_to_insert, misses);
+
+		}
+		
+
+		#else
+
+		insert_diff[batch] = split_insert_timing<key_type>(vqf, dev_keys, short_keys, items_to_insert, misses);
+
+		#endif
+
+		
 		cudaDeviceSynchronize();
 
-		cudaMemcpy(dev_val_references, val_references + start, items_to_insert*sizeof(uint64_t), cudaMemcpyHostToDevice);
+		cudaMemcpy(dev_keys, keys + start, items_to_insert*sizeof(uint64_t), cudaMemcpyHostToDevice);
 
-		cudaMemcpy(dev_vals, vals + start, items_to_insert*sizeof(main_data_type), cudaMemcpyHostToDevice);
 
 		cudaDeviceSynchronize();
 
 
 		//launch queries
-		query_diff[batch] = bulk_query_timing<key_type>(vqf, dev_val_references, dev_vals, items_to_insert, misses);
+		query_diff[batch] = bulk_query_timing<key_type>(vqf, dev_keys, short_keys, items_to_insert, misses);
 
 
 		cudaDeviceSynchronize();
 
-		cudaMemcpy(dev_val_references, fp_val_references + start, items_to_insert*sizeof(uint64_t), cudaMemcpyHostToDevice);
+		cudaMemcpy(dev_keys, fp_keys + start, items_to_insert*sizeof(uint64_t), cudaMemcpyHostToDevice);
 
-		cudaMemcpy(dev_vals, fp_vals + start, items_to_insert*sizeof(main_data_type), cudaMemcpyHostToDevice);
+		//cudaMemcpy(dev_vals, fp_vals + start, items_to_insert*sizeof(main_data_type), cudaMemcpyHostToDevice);
 
 		cudaDeviceSynchronize();
 
 
 		//false queries
-		fp_diff[batch] = fp_timing<key_type>(vqf, dev_val_references, dev_vals, items_to_insert, misses);
+		fp_diff[batch] = fp_timing<key_type>(vqf, dev_keys, short_keys, items_to_insert, misses);
 
 
 		cudaDeviceSynchronize();
@@ -675,11 +769,30 @@ int main(int argc, char** argv) {
 	}
 
 
-	free(vals);
+	#ifdef COUNTING_CYCLES
 
-	free(fp_vals);
+	printf("Cycle counts: insert_total, load, distribute, sorting, merging, hashing, set_buffer, set_len\n%llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu\n", cycles[0], cycles[6], cycles[7], cycles[1], cycles[2], cycles[3], cycles[4], cycles[5]);
 
-	cudaFree(dev_vals);
+
+
+	printf("%f, %f, %f, %f, %f, %f, %f, %f\n", 1.0*cycles[0]/num_warps[0], 1.0*cycles[6]/num_warps[0], 1.0*cycles[7]/num_warps[0], 1.0*cycles[1]/num_warps[0], 1.0*cycles[2]/num_warps[0], 1.0*cycles[3]/num_warps[1], 1.0*cycles[4]/num_warps[2], 1.0*cycles[5]/num_warps[3]);
+	
+
+
+	// printf("Hashing, set buffer, set len, load, distribute, sorting, merging");
+	// printf("%f, %f, %f, %f, %f, %f, %f, %f\n",  )
+	cudaFree(cycles);
+
+	cudaFree(num_warps);
+	#endif
+
+
+	free(keys);
+
+	free(fp_keys);
+
+	cudaFree(dev_keys);
+	cudaFree(short_keys);
 
 	cudaFree(misses);
 

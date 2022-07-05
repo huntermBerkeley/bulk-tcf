@@ -1,4 +1,4 @@
-TARGETS=batched_template_tests const_batched_template_tests batched_vqf_tests
+TARGETS=batched_template_tests
 
 ifdef D
 	DEBUG=-g -G
