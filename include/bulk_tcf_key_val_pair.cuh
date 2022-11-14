@@ -4,7 +4,7 @@
 
 #include <cuda.h>
 #include <cuda_runtime_api.h>
-#include "include/metadata.cuh"
+#include "bulk_tcf_metadata.cuh"
 #include <variant>
 
 
