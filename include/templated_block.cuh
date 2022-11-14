@@ -4,8 +4,8 @@
 
 #include <cuda.h>
 #include <cuda_runtime_api.h>
-#include "include/metadata.cuh"
-#include "include/key_val_pair.cuh"
+#include "bulk_tcf_metadata.cuh"
+#include "bulk_tcf_key_val_pair.cuh"
 #include <stdio.h>
 #include <assert.h>
 
