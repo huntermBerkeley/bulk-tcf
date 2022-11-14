@@ -2656,8 +2656,8 @@ __host__ bulk_tcf<Key, Val, Wrapper> * build_tcf(uint64_t nitems){
 
 	uint64_t num_blocks = num_teams*BLOCKS_PER_THREAD_BLOCK;
 
-	printf("tcf hash hash %llu thread_team_blocks of %d blocks, total %llu blocks\n", num_teams, BLOCKS_PER_THREAD_BLOCK, num_blocks);
-	printf("Each block is %llu items of size %d, total size %d\n", block_type::max_size(), sizeof(key_type), block_type::max_size()*sizeof(key_type));
+	//printf("tcf hash hash %llu thread_team_blocks of %d blocks, total %llu blocks\n", num_teams, BLOCKS_PER_THREAD_BLOCK, num_blocks);
+	//printf("Each block is %llu items of size %d, total size %d\n", block_type::max_size(), sizeof(key_type), block_type::max_size()*sizeof(key_type));
 
 
 	host_tcf->num_teams = num_teams;
@@ -2684,7 +2684,7 @@ __host__ bulk_tcf<Key, Val, Wrapper> * build_tcf(uint64_t nitems){
 	host_tcf->dividing_line = (1ULL << (8*sizeof(Key)-5));
 	//buffers
 
-	printf("dividing_line: %llu\n", host_tcf->dividing_line);
+	//printf("dividing_line: %llu\n", host_tcf->dividing_line);
 
 	key_type ** buffers;
 
