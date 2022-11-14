@@ -1,5 +1,5 @@
-#ifndef TEMPLATED_VQF_H 
-#define TEMPLATED_VQF_H
+#ifndef BULK_TCF_H 
+#define BULK_TCF_H
 
 
 #include <cuda.h>
