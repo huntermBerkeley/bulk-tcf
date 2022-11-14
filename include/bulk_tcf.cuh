@@ -57,7 +57,7 @@ namespace cg = cooperative_groups;
 //cuda templated globals
 
 template <typename Filter, typename Key_type>
-__global__ void hash_all_key_purge(Filter * my_vqf, uint64_t * large_keys, Key_type * keys, uint64_t nvals){
+__global__ void hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_type * keys, uint64_t nvals){
 
 
 	uint64_t tid = threadIdx.x + blockDim.x*blockIdx.x;
@@ -70,9 +70,9 @@ __global__ void hash_all_key_purge(Filter * my_vqf, uint64_t * large_keys, Key_t
 	keys[tid] = (Key_type) large_keys[tid];
 
 
-	key = my_vqf->get_bucket_from_key(key);
+	key = my_tcf->get_bucket_from_key(key);
 
-	uint64_t new_key = my_vqf->get_reference_from_bucket(key) | keys[tid].get_key();
+	uint64_t new_key = my_tcf->get_reference_from_bucket(key) | keys[tid].get_key();
 
 	//buckets are now sortable!
 	large_keys[tid] = new_key;
@@ -81,7 +81,7 @@ __global__ void hash_all_key_purge(Filter * my_vqf, uint64_t * large_keys, Key_t
 
 
 template<typename Filter, typename Key_type>
-__global__ void hash_all_keys(Filter * my_vqf, uint64_t * keys, uint64_t nvals){
+__global__ void hash_all_keys(Filter * my_tcf, uint64_t * keys, uint64_t nvals){
 
 	uint64_t tid = threadIdx.x + blockDim.x*blockIdx.x;
 
@@ -89,16 +89,16 @@ __global__ void hash_all_keys(Filter * my_vqf, uint64_t * keys, uint64_t nvals){
 
 	uint64_t key = keys[tid];
 
-	uint64_t hash = my_vqf->get_bucket_from_key(key);
+	uint64_t hash = my_tcf->get_bucket_from_key(key);
 
-	uint64_t new_key = my_vqf->get_reference_from_bucket(hash) | key;
+	uint64_t new_key = my_tcf->get_reference_from_bucket(hash) | key;
 
 	keys[tid] = new_key;
 }
 
 
 template <typename Filter, typename Key_type>
-__global__ void hash_all_key_purge_cycles(Filter * my_vqf, uint64_t * vals, Key_type * keys, uint64_t nvals, uint64_t * cycles){
+__global__ void hash_all_key_purge_cycles(Filter * my_tcf, uint64_t * vals, Key_type * keys, uint64_t nvals, uint64_t * cycles){
 
 
 	uint64_t tid = threadIdx.x + blockDim.x*blockIdx.x;
@@ -111,9 +111,9 @@ __global__ void hash_all_key_purge_cycles(Filter * my_vqf, uint64_t * vals, Key_
 
 	keys[tid] = (Key_type) vals[tid];
 
-	key = my_vqf->get_bucket_from_key(key);
+	key = my_tcf->get_bucket_from_key(key);
 
-	uint64_t new_key = my_vqf->get_reference_from_bucket(key) | keys[tid].get_key();
+	uint64_t new_key = my_tcf->get_reference_from_bucket(key) | keys[tid].get_key();
 
 	//buckets are now sortable!
 	vals[tid] = new_key;
@@ -129,7 +129,7 @@ __global__ void hash_all_key_purge_cycles(Filter * my_vqf, uint64_t * vals, Key_
 }
 
 template <typename Filter, typename Key_type>
-__global__ void set_buffers_binary(Filter * my_vqf, uint64_t * references, Key_type * keys, uint64_t nvals){
+__global__ void set_buffers_binary(Filter * my_tcf, uint64_t * references, Key_type * keys, uint64_t nvals){
 
 
 		// #if DEBUG_ASSERTS
@@ -141,7 +141,7 @@ __global__ void set_buffers_binary(Filter * my_vqf, uint64_t * references, Key_t
 
 		uint64_t idx = threadIdx.x + blockDim.x * blockIdx.x;
 
-		if (idx >= my_vqf->num_blocks) return;
+		if (idx >= my_tcf->num_blocks) return;
 
 		//uint64_t slots_per_lock = VIRTUAL_BUCKETS;
 
@@ -174,11 +174,11 @@ __global__ void set_buffers_binary(Filter * my_vqf, uint64_t * references, Key_t
 			index = lower + (upper - lower)/2;
 
 			//((keys[index] >> TAG_BITS)
-			uint64_t bucket = my_vqf->get_bucket_from_reference(references[index]);
+			uint64_t bucket = my_tcf->get_bucket_from_reference(references[index]);
 
 
 			if (index != 0)
-			uint64_t old_bucket = my_vqf->get_bucket_from_reference(references[index-1]);
+			uint64_t old_bucket = my_tcf->get_bucket_from_reference(references[index-1]);
 
 			if (bucket < boundary){
 
@@ -197,7 +197,7 @@ __global__ void set_buffers_binary(Filter * my_vqf, uint64_t * references, Key_t
 				//(get_bucket_from_reference(references[index-1])
 				//(keys[index-1] >> TAG_BITS)
 
-			} else if (my_vqf->get_bucket_from_reference(references[index-1]) < boundary) {
+			} else if (my_tcf->get_bucket_from_reference(references[index-1]) < boundary) {
 
 				//set index! this is the first instance where I am valid and the next isnt
 				//buffers[idx] = keys+index;
@@ -217,17 +217,17 @@ __global__ void set_buffers_binary(Filter * my_vqf, uint64_t * references, Key_t
 		//upper == lower iff 0 or max key
 		index = lower + (upper - lower)/2;
 
-		//assert(my_vqf->get_bucket_from_hash(keys[index]) <= idx);
+		//assert(my_tcf->get_bucket_from_hash(keys[index]) <= idx);
 
 
-		my_vqf->buffers[idx] = keys + index;
+		my_tcf->buffers[idx] = keys + index;
 		
 
 
 }
 
 template <typename Filter, typename Key_type>
-__global__ void set_buffers_binary(Filter * my_vqf, uint64_t * keys, uint64_t nvals){
+__global__ void set_buffers_binary(Filter * my_tcf, uint64_t * keys, uint64_t nvals){
 
 
 		// #if DEBUG_ASSERTS
@@ -239,7 +239,7 @@ __global__ void set_buffers_binary(Filter * my_vqf, uint64_t * keys, uint64_t nv
 
 		uint64_t idx = threadIdx.x + blockDim.x * blockIdx.x;
 
-		if (idx >= my_vqf->num_blocks) return;
+		if (idx >= my_tcf->num_blocks) return;
 
 		//uint64_t slots_per_lock = VIRTUAL_BUCKETS;
 
@@ -272,11 +272,11 @@ __global__ void set_buffers_binary(Filter * my_vqf, uint64_t * keys, uint64_t nv
 			index = lower + (upper - lower)/2;
 
 			//((keys[index] >> TAG_BITS)
-			uint64_t bucket = my_vqf->get_bucket_from_reference(keys[index]);
+			uint64_t bucket = my_tcf->get_bucket_from_reference(keys[index]);
 
 
 			if (index != 0)
-			uint64_t old_bucket = my_vqf->get_bucket_from_reference(keys[index-1]);
+			uint64_t old_bucket = my_tcf->get_bucket_from_reference(keys[index-1]);
 
 			if (bucket < boundary){
 
@@ -295,7 +295,7 @@ __global__ void set_buffers_binary(Filter * my_vqf, uint64_t * keys, uint64_t nv
 				//(get_bucket_from_reference(references[index-1])
 				//(keys[index-1] >> TAG_BITS)
 
-			} else if (my_vqf->get_bucket_from_reference(keys[index-1]) < boundary) {
+			} else if (my_tcf->get_bucket_from_reference(keys[index-1]) < boundary) {
 
 				//set index! this is the first instance where I am valid and the next isnt
 				//buffers[idx] = keys+index;
@@ -315,17 +315,17 @@ __global__ void set_buffers_binary(Filter * my_vqf, uint64_t * keys, uint64_t nv
 		//upper == lower iff 0 or max key
 		index = lower + (upper - lower)/2;
 
-		//assert(my_vqf->get_bucket_from_hash(keys[index]) <= idx);
+		//assert(my_tcf->get_bucket_from_hash(keys[index]) <= idx);
 
 
-		my_vqf->buffers[idx] = keys + index;
+		my_tcf->buffers[idx] = keys + index;
 		
 
 
 }
 
 template <typename Filter, typename Key_type>
-__global__ void set_buffers_binary_cycles(Filter * my_vqf, uint64_t * references, Key_type * keys, uint64_t nvals, uint64_t * cycles){
+__global__ void set_buffers_binary_cycles(Filter * my_tcf, uint64_t * references, Key_type * keys, uint64_t nvals, uint64_t * cycles){
 
 
 		// #if DEBUG_ASSERTS
@@ -337,7 +337,7 @@ __global__ void set_buffers_binary_cycles(Filter * my_vqf, uint64_t * references
 
 		uint64_t idx = threadIdx.x + blockDim.x * blockIdx.x;
 
-		if (idx >= my_vqf->num_blocks) return;
+		if (idx >= my_tcf->num_blocks) return;
 
 		uint64_t clock_start = clock();
 
@@ -372,11 +372,11 @@ __global__ void set_buffers_binary_cycles(Filter * my_vqf, uint64_t * references
 			index = lower + (upper - lower)/2;
 
 			//((keys[index] >> TAG_BITS)
-			uint64_t bucket = my_vqf->get_bucket_from_reference(references[index]);
+			uint64_t bucket = my_tcf->get_bucket_from_reference(references[index]);
 
 
 			if (index != 0)
-			uint64_t old_bucket = my_vqf->get_bucket_from_reference(references[index-1]);
+			uint64_t old_bucket = my_tcf->get_bucket_from_reference(references[index-1]);
 
 			if (bucket < boundary){
 
@@ -395,7 +395,7 @@ __global__ void set_buffers_binary_cycles(Filter * my_vqf, uint64_t * references
 				//(get_bucket_from_reference(references[index-1])
 				//(keys[index-1] >> TAG_BITS)
 
-			} else if (my_vqf->get_bucket_from_reference(references[index-1]) < boundary) {
+			} else if (my_tcf->get_bucket_from_reference(references[index-1]) < boundary) {
 
 				//set index! this is the first instance where I am valid and the next isnt
 				//buffers[idx] = keys+index;
@@ -415,10 +415,10 @@ __global__ void set_buffers_binary_cycles(Filter * my_vqf, uint64_t * references
 		//upper == lower iff 0 or max key
 		index = lower + (upper - lower)/2;
 
-		//assert(my_vqf->get_bucket_from_hash(keys[index]) <= idx);
+		//assert(my_tcf->get_bucket_from_hash(keys[index]) <= idx);
 
 
-		my_vqf->buffers[idx] = keys + index;
+		my_tcf->buffers[idx] = keys + index;
 
 		uint64_t clock_end = clock();
 
@@ -435,7 +435,7 @@ __global__ void set_buffers_binary_cycles(Filter * my_vqf, uint64_t * references
 }
 
 template <typename Filter, typename Key_type>
-__global__ void set_buffer_lens(Filter * my_vqf, uint64_t num_keys,  Key_type * keys){
+__global__ void set_buffer_lens(Filter * my_tcf, uint64_t num_keys,  Key_type * keys){
 
 
 	// #if DEBUG_ASSERTS
@@ -444,7 +444,7 @@ __global__ void set_buffer_lens(Filter * my_vqf, uint64_t num_keys,  Key_type * 
 
 	// #endif
 
-	uint64_t num_buffers = my_vqf->num_blocks;
+	uint64_t num_buffers = my_tcf->num_blocks;
 
 
 	uint64_t idx = threadIdx.x + blockDim.x*blockIdx.x;
@@ -456,10 +456,10 @@ __global__ void set_buffer_lens(Filter * my_vqf, uint64_t num_keys,  Key_type * 
 	if (idx != num_buffers-1){
 
 		//this should work? not 100% convinced but it seems ok
-		my_vqf->buffer_sizes[idx] = my_vqf->buffers[idx+1] - my_vqf->buffers[idx];
+		my_tcf->buffer_sizes[idx] = my_tcf->buffers[idx+1] - my_tcf->buffers[idx];
 	} else {
 
-		my_vqf->buffer_sizes[idx] = num_keys - (my_vqf->buffers[idx] - keys);
+		my_tcf->buffer_sizes[idx] = num_keys - (my_tcf->buffers[idx] - keys);
 
 	}
 
@@ -469,7 +469,7 @@ __global__ void set_buffer_lens(Filter * my_vqf, uint64_t num_keys,  Key_type * 
 }
 
 template <typename Filter, typename Key_type>
-__global__ void set_buffer_lens_cycles(Filter * my_vqf, uint64_t num_keys,  Key_type * keys, uint64_t * cycles){
+__global__ void set_buffer_lens_cycles(Filter * my_tcf, uint64_t num_keys,  Key_type * keys, uint64_t * cycles){
 
 
 	// #if DEBUG_ASSERTS
@@ -478,7 +478,7 @@ __global__ void set_buffer_lens_cycles(Filter * my_vqf, uint64_t num_keys,  Key_
 
 	// #endif
 
-	uint64_t num_buffers = my_vqf->num_blocks;
+	uint64_t num_buffers = my_tcf->num_blocks;
 
 
 	uint64_t idx = threadIdx.x + blockDim.x*blockIdx.x;
@@ -492,10 +492,10 @@ __global__ void set_buffer_lens_cycles(Filter * my_vqf, uint64_t num_keys,  Key_
 	if (idx != num_buffers-1){
 
 		//this should work? not 100% convinced but it seems ok
-		my_vqf->buffer_sizes[idx] = my_vqf->buffers[idx+1] - my_vqf->buffers[idx];
+		my_tcf->buffer_sizes[idx] = my_tcf->buffers[idx+1] - my_tcf->buffers[idx];
 	} else {
 
-		my_vqf->buffer_sizes[idx] = num_keys - (my_vqf->buffers[idx] - keys);
+		my_tcf->buffer_sizes[idx] = num_keys - (my_tcf->buffers[idx] - keys);
 
 	}
 
@@ -513,7 +513,7 @@ __global__ void set_buffer_lens_cycles(Filter * my_vqf, uint64_t num_keys,  Key_
 }
 
 template <typename Filter>
-__global__ void sorted_bulk_insert_kernel(Filter * vqf, uint64_t * misses){
+__global__ void sorted_bulk_insert_kernel(Filter * tcf, uint64_t * misses){
 
 	uint64_t tid = threadIdx.x + blockIdx.x*blockDim.x;
 
@@ -523,13 +523,13 @@ __global__ void sorted_bulk_insert_kernel(Filter * vqf, uint64_t * misses){
 
 
 	//TODO double check me
-	if (teamID >= vqf->num_teams) return;
+	if (teamID >= tcf->num_teams) return;
 
 
-	//vqf->sorted_mini_filter_block(misses);
+	//tcf->sorted_mini_filter_block(misses);
 
-	vqf->sorted_dev_insert(misses);
-	//vqf->persistent_dev_insert(misses);
+	tcf->sorted_dev_insert(misses);
+	//tcf->persistent_dev_insert(misses);
 
 	return;
 
@@ -539,7 +539,7 @@ __global__ void sorted_bulk_insert_kernel(Filter * vqf, uint64_t * misses){
 }
 
 template <typename Filter>
-__global__ void sorted_bulk_insert_kernel_cycles(Filter * vqf, uint64_t * misses, uint64_t * cycles){
+__global__ void sorted_bulk_insert_kernel_cycles(Filter * tcf, uint64_t * misses, uint64_t * cycles){
 
 	uint64_t tid = threadIdx.x + blockIdx.x*blockDim.x;
 
@@ -549,13 +549,13 @@ __global__ void sorted_bulk_insert_kernel_cycles(Filter * vqf, uint64_t * misses
 
 
 	//TODO double check me
-	if (teamID >= vqf->num_teams) return;
+	if (teamID >= tcf->num_teams) return;
 
 
-	//vqf->sorted_mini_filter_block(misses);
+	//tcf->sorted_mini_filter_block(misses);
 
-	vqf->sorted_dev_insert_cycles(misses, cycles);
-	//vqf->persistent_dev_insert(misses);
+	tcf->sorted_dev_insert_cycles(misses, cycles);
+	//tcf->persistent_dev_insert(misses);
 
 	return;
 
@@ -565,7 +565,7 @@ __global__ void sorted_bulk_insert_kernel_cycles(Filter * vqf, uint64_t * misses
 }
 
 template<typename Filter>
-__global__ void bulk_sorted_query_kernel(Filter * vqf, bool * hits){
+__global__ void bulk_sorted_query_kernel(Filter * tcf, bool * hits){
 
 
 	uint64_t tid = threadIdx.x + blockIdx.x*blockDim.x;
@@ -578,9 +578,9 @@ __global__ void bulk_sorted_query_kernel(Filter * vqf, bool * hits){
 
 	#endif
 
-	if (teamID >= vqf->num_teams) return;
+	if (teamID >= tcf->num_teams) return;
 
-	vqf->mini_filter_bulk_queries(hits);
+	tcf->mini_filter_bulk_queries(hits);
 }
 
 
@@ -590,7 +590,7 @@ __global__ void bulk_sorted_query_kernel(Filter * vqf, bool * hits){
 
 
 // template <typename Filter, typename Key_type>
-// __global__ void test_kernel(T * my_vqf){
+// __global__ void test_kernel(T * my_tcf){
 
 
 // }
@@ -607,7 +607,7 @@ struct __attribute__ ((__packed__)) thread_team_block {
 
 
 template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper >
-struct __attribute__ ((__packed__)) templated_vqf {
+struct __attribute__ ((__packed__)) bulk_tcf {
 
 
 	//tag bits change based on the #of bytes allocated per block
@@ -640,16 +640,16 @@ struct __attribute__ ((__packed__)) templated_vqf {
 
 	__host__ void attach_lossy_buffers(uint64_t * large_keys, key_type * compressed_keys, uint64_t nitems, uint64_t ext_num_blocks){
 
-		hash_all_key_purge<templated_vqf<Key, Val, Wrapper>, key_type><<<(nitems -1)/1024 + 1, 1024>>>(this, large_keys, compressed_keys, nitems);
+		hash_all_key_purge<bulk_tcf<Key, Val, Wrapper>, key_type><<<(nitems -1)/1024 + 1, 1024>>>(this, large_keys, compressed_keys, nitems);
 
 		thrust::sort_by_key(thrust::device, large_keys, large_keys+nitems, compressed_keys);
 
 
 	
 
-		set_buffers_binary<templated_vqf<Key, Val, Wrapper>, key_type><<<(ext_num_blocks -1)/1024+1, 1024>>>(this, large_keys, compressed_keys, nitems);
+		set_buffers_binary<bulk_tcf<Key, Val, Wrapper>, key_type><<<(ext_num_blocks -1)/1024+1, 1024>>>(this, large_keys, compressed_keys, nitems);
 
-		set_buffer_lens<templated_vqf<Key, Val, Wrapper>, key_type><<<(ext_num_blocks -1)/1024+1, 1024>>>(this, nitems, compressed_keys);
+		set_buffer_lens<bulk_tcf<Key, Val, Wrapper>, key_type><<<(ext_num_blocks -1)/1024+1, 1024>>>(this, nitems, compressed_keys);
 
 
 	}
@@ -657,16 +657,16 @@ struct __attribute__ ((__packed__)) templated_vqf {
 
 	__host__ void attach_lossy_buffers_cycles(uint64_t * items, key_type * keys, uint64_t nitems, uint64_t ext_num_blocks, uint64_t * cycles, uint64_t * num_warps){
 
-		hash_all_key_purge_cycles<templated_vqf<Key, Val, Wrapper>, key_type><<<(nitems -1)/1024 + 1, 1024>>>(this, items, keys, nitems, cycles);
+		hash_all_key_purge_cycles<bulk_tcf<Key, Val, Wrapper>, key_type><<<(nitems -1)/1024 + 1, 1024>>>(this, items, keys, nitems, cycles);
 
 		thrust::sort_by_key(thrust::device, items, items+nitems, keys);
 
 
 	
 
-		set_buffers_binary_cycles<templated_vqf<Key, Val, Wrapper>, key_type><<<(ext_num_blocks -1)/1024+1, 1024>>>(this, items, keys, nitems, cycles);
+		set_buffers_binary_cycles<bulk_tcf<Key, Val, Wrapper>, key_type><<<(ext_num_blocks -1)/1024+1, 1024>>>(this, items, keys, nitems, cycles);
 
-		set_buffer_lens_cycles<templated_vqf<Key, Val, Wrapper>, key_type><<<(ext_num_blocks -1)/1024+1, 1024>>>(this, nitems, keys, cycles);
+		set_buffer_lens_cycles<bulk_tcf<Key, Val, Wrapper>, key_type><<<(ext_num_blocks -1)/1024+1, 1024>>>(this, nitems, keys, cycles);
 
 		num_warps[1] += nitems/32;
 		num_warps[2] += ext_num_blocks/32;
@@ -690,7 +690,7 @@ struct __attribute__ ((__packed__)) templated_vqf {
 	__host__ void bulk_insert(uint64_t * misses, uint64_t ext_num_teams){
 
 
-				sorted_bulk_insert_kernel<templated_vqf<Key, Val, Wrapper>><<<ext_num_teams, BLOCK_SIZE>>>(this, misses);
+				sorted_bulk_insert_kernel<bulk_tcf<Key, Val, Wrapper>><<<ext_num_teams, BLOCK_SIZE>>>(this, misses);
 
 
 	}
@@ -698,7 +698,7 @@ struct __attribute__ ((__packed__)) templated_vqf {
 	__host__ void bulk_insert_cycles(uint64_t * misses, uint64_t * cycles, uint64_t ext_num_teams, uint64_t * num_warps){
 
 
-				sorted_bulk_insert_kernel_cycles<templated_vqf<Key, Val, Wrapper>><<<ext_num_teams, BLOCK_SIZE>>>(this, misses, cycles);
+				sorted_bulk_insert_kernel_cycles<bulk_tcf<Key, Val, Wrapper>><<<ext_num_teams, BLOCK_SIZE>>>(this, misses, cycles);
 
 				num_warps[0] += ext_num_teams*BLOCK_SIZE/32;
 	}
@@ -2476,7 +2476,7 @@ __device__ void dump_all_buffers_into_local_block(thread_team_block<block_type> 
 	__host__ void bulk_query(bool * hits, uint64_t ext_num_teams){
 
 
-		bulk_sorted_query_kernel<templated_vqf<Key, Val, Wrapper>><<<ext_num_teams, BLOCK_SIZE>>>(this, hits);
+		bulk_sorted_query_kernel<bulk_tcf<Key, Val, Wrapper>><<<ext_num_teams, BLOCK_SIZE>>>(this, hits);
 
 
 
@@ -2563,16 +2563,16 @@ __device__ void dump_all_buffers_into_local_block(thread_team_block<block_type> 
 	__host__ uint64_t get_num_blocks(){
 
 
-		templated_vqf<Key, Val, Wrapper> * host_vqf;
+		bulk_tcf<Key, Val, Wrapper> * host_tcf;
 
 
-		cudaMallocHost((void **)& host_vqf, sizeof(templated_vqf<Key, Val, Wrapper>));
+		cudaMallocHost((void **)& host_tcf, sizeof(bulk_tcf<Key, Val, Wrapper>));
 
-		cudaMemcpy(host_vqf, this, sizeof(templated_vqf<Key, Val, Wrapper>), cudaMemcpyDeviceToHost);
+		cudaMemcpy(host_tcf, this, sizeof(bulk_tcf<Key, Val, Wrapper>), cudaMemcpyDeviceToHost);
 
-		uint64_t blocks_val = host_vqf->num_blocks;
+		uint64_t blocks_val = host_tcf->num_blocks;
 
-		cudaFreeHost(host_vqf);
+		cudaFreeHost(host_tcf);
 
 		return blocks_val;
 
@@ -2583,16 +2583,16 @@ __device__ void dump_all_buffers_into_local_block(thread_team_block<block_type> 
 	__host__ uint64_t get_num_teams(){
 
 
-		templated_vqf<Key, Val, Wrapper> * host_vqf;
+		bulk_tcf<Key, Val, Wrapper> * host_tcf;
 
 
-		cudaMallocHost((void **)& host_vqf, sizeof(templated_vqf<Key, Val, Wrapper>));
+		cudaMallocHost((void **)& host_tcf, sizeof(bulk_tcf<Key, Val, Wrapper>));
 
-		cudaMemcpy(host_vqf, this, sizeof(templated_vqf<Key, Val, Wrapper>), cudaMemcpyDeviceToHost);
+		cudaMemcpy(host_tcf, this, sizeof(bulk_tcf<Key, Val, Wrapper>), cudaMemcpyDeviceToHost);
 
-		uint64_t teams_val = host_vqf->num_teams;
+		uint64_t teams_val = host_tcf->num_teams;
 
-		cudaFreeHost(host_vqf);
+		cudaFreeHost(host_tcf);
 
 
 		return teams_val;
@@ -2613,26 +2613,26 @@ __device__ void dump_all_buffers_into_local_block(thread_team_block<block_type> 
 
 
 template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper >
-__host__ void free_vqf(templated_vqf<Key, Val, Wrapper> * vqf){
+__host__ void free_tcf(bulk_tcf<Key, Val, Wrapper> * tcf){
 
 
-	templated_vqf<Key, Val, Wrapper> * host_vqf;
+	bulk_tcf<Key, Val, Wrapper> * host_tcf;
 
 
-	cudaMallocHost((void **)& host_vqf, sizeof(templated_vqf<Key, Val, Wrapper>));
+	cudaMallocHost((void **)& host_tcf, sizeof(bulk_tcf<Key, Val, Wrapper>));
 
-	cudaMemcpy(host_vqf, vqf, sizeof(templated_vqf<Key, Val, Wrapper>), cudaMemcpyDeviceToHost);
+	cudaMemcpy(host_tcf, tcf, sizeof(bulk_tcf<Key, Val, Wrapper>), cudaMemcpyDeviceToHost);
 
-	cudaFree(vqf);
+	cudaFree(tcf);
 
-	cudaFree(host_vqf->blocks);
+	cudaFree(host_tcf->blocks);
 
-	cudaFree(host_vqf->block_counters);
+	cudaFree(host_tcf->block_counters);
 
-	cudaFree(host_vqf->buffers);
-	cudaFree(host_vqf->buffer_sizes);
+	cudaFree(host_tcf->buffers);
+	cudaFree(host_tcf->buffer_sizes);
 
-	cudaFreeHost(host_vqf);
+	cudaFreeHost(host_tcf);
 
 
 
@@ -2641,27 +2641,27 @@ __host__ void free_vqf(templated_vqf<Key, Val, Wrapper> * vqf){
 
 
 template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper >
-__host__ templated_vqf<Key, Val, Wrapper> * build_vqf(uint64_t nitems){
+__host__ bulk_tcf<Key, Val, Wrapper> * build_tcf(uint64_t nitems){
 
 
 	using key_type = key_val_pair<Key, Val, Wrapper>;
 
 	using block_type = templated_block<key_type>;
 
-	templated_vqf<Key, Val, Wrapper> * host_vqf;
+	bulk_tcf<Key, Val, Wrapper> * host_tcf;
 
-	cudaMallocHost((void **)&host_vqf, sizeof(templated_vqf<Key,Val,Wrapper>));
+	cudaMallocHost((void **)&host_tcf, sizeof(bulk_tcf<Key,Val,Wrapper>));
 
 	uint64_t num_teams = (nitems - 1)/(BLOCKS_PER_THREAD_BLOCK*block_type::max_size()) + 1;
 
 	uint64_t num_blocks = num_teams*BLOCKS_PER_THREAD_BLOCK;
 
-	printf("VQF hash hash %llu thread_team_blocks of %d blocks, total %llu blocks\n", num_teams, BLOCKS_PER_THREAD_BLOCK, num_blocks);
+	printf("tcf hash hash %llu thread_team_blocks of %d blocks, total %llu blocks\n", num_teams, BLOCKS_PER_THREAD_BLOCK, num_blocks);
 	printf("Each block is %llu items of size %d, total size %d\n", block_type::max_size(), sizeof(key_type), block_type::max_size()*sizeof(key_type));
 
 
-	host_vqf->num_teams = num_teams;
-	host_vqf->num_blocks = num_blocks;
+	host_tcf->num_teams = num_teams;
+	host_tcf->num_blocks = num_blocks;
 
 
 	int * counters;
@@ -2670,7 +2670,7 @@ __host__ templated_vqf<Key, Val, Wrapper> * build_vqf(uint64_t nitems){
 
 	cudaMemset(counters, 0, num_blocks*sizeof(int));
 
-	host_vqf->block_counters = counters;
+	host_tcf->block_counters = counters;
 
 
 	thread_team_block<block_type> * blocks;
@@ -2678,39 +2678,39 @@ __host__ templated_vqf<Key, Val, Wrapper> * build_vqf(uint64_t nitems){
 	cudaMalloc((void **)& blocks, num_teams*sizeof(thread_team_block<block_type>));
 
 
-	host_vqf->blocks = blocks;
+	host_tcf->blocks = blocks;
 
 	//this should 
-	host_vqf->dividing_line = (1ULL << (8*sizeof(Key)-5));
+	host_tcf->dividing_line = (1ULL << (8*sizeof(Key)-5));
 	//buffers
 
-	printf("dividing_line: %llu\n", host_vqf->dividing_line);
+	printf("dividing_line: %llu\n", host_tcf->dividing_line);
 
 	key_type ** buffers;
 
 	cudaMalloc((void **)&buffers, num_blocks*sizeof(key_type **));
 
-	host_vqf->buffers = buffers;
+	host_tcf->buffers = buffers;
 
 	int * buffer_sizes;
 
 	cudaMalloc((void **)&buffer_sizes, num_blocks*sizeof(int));
 
-	host_vqf->buffer_sizes = buffer_sizes;
+	host_tcf->buffer_sizes = buffer_sizes;
 
 
-	templated_vqf<Key, Val, Wrapper> * dev_vqf;
+	bulk_tcf<Key, Val, Wrapper> * dev_tcf;
 
 
-	cudaMalloc((void **)& dev_vqf, sizeof(templated_vqf<Key, Val, Wrapper>));
+	cudaMalloc((void **)& dev_tcf, sizeof(bulk_tcf<Key, Val, Wrapper>));
 
-	cudaMemcpy(dev_vqf, host_vqf, sizeof(templated_vqf<Key, Val, Wrapper>), cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_tcf, host_tcf, sizeof(bulk_tcf<Key, Val, Wrapper>), cudaMemcpyHostToDevice);
 
-	cudaFreeHost(host_vqf);
+	cudaFreeHost(host_tcf);
 
 
 
-	return dev_vqf;
+	return dev_tcf;
 
 }
 
