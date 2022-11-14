@@ -4,11 +4,11 @@
 
 #include <cuda.h>
 #include <cuda_runtime_api.h>
-#include "include/metadata.cuh"
-#include "include/key_val_pair.cuh"
-#include "include/templated_block.cuh"
-#include "include/hashutil.cuh"
-#include "include/templated_sorting_funcs.cuh"
+#include "bulk_tcf_metadata.cuh"
+#include "bulk_tcf_key_val_pair.cuh"
+#include "templated_block.cuh"
+#include "bulk_tcf_hashutil.cuh"
+#include "templated_sorting_funcs.cuh"
 #include <stdio.h>
 #include <assert.h>
 
