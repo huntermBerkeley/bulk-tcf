@@ -8,4 +8,5 @@ set(DEFAULT_BUILD_TYPE "Release")
 
 add_library(bulk_tcf INTERFACE)
 
-include_directories(${PROJECT_SOURCE_DIR}/include)
+target_include_directories(bulk_tcf INTERFACE ${PROJECT_SOURCE_DIR}/include)
+
