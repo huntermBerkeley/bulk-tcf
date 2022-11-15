@@ -30,13 +30,13 @@
 #include <bitset>
 
 
-#include "include/cooperative_templated_vqf.cuh"
-#include "include/metadata.cuh"
+#include "bulk_tcf.cuh"
+#include "bulk_tcf_metadata.cuh"
 
 #include <openssl/rand.h>
 
 
-#define COUNTING_CYCLES 1
+#define COUNTING_CYCLES 0
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
@@ -64,18 +64,18 @@ __global__ void check_hits(bool * hits, uint64_t * misses, uint64_t nitems){
 }
 
 template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper>
-__host__ std::chrono::duration<double> split_insert_timing(templated_vqf<Key, Val, Wrapper> * my_vqf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * keys, uint64_t nvals, uint64_t * misses){
+__host__ std::chrono::duration<double> split_insert_timing(bulk_tcf<Key, Val, Wrapper> * my_tcf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * keys, uint64_t nvals, uint64_t * misses){
 
 
-	uint64_t num_blocks = my_vqf->get_num_blocks();
+	uint64_t num_blocks = my_tcf->get_num_blocks();
 
-	uint64_t num_teams = my_vqf->get_num_teams();
+	uint64_t num_teams = my_tcf->get_num_teams();
 
 	cudaDeviceSynchronize();
 
 	auto start = std::chrono::high_resolution_clock::now();
 
-	my_vqf->attach_lossy_buffers(large_keys, keys, nvals, num_blocks);
+	my_tcf->attach_lossy_buffers(large_keys, keys, nvals, num_blocks);
 
 
 	cudaDeviceSynchronize();
@@ -86,7 +86,7 @@ __host__ std::chrono::duration<double> split_insert_timing(templated_vqf<Key, Va
 	auto midpoint = std::chrono::high_resolution_clock::now();
 
 
-	my_vqf->bulk_insert(misses, num_teams);
+	my_tcf->bulk_insert(misses, num_teams);
 	
 
 	cudaDeviceSynchronize();
@@ -122,18 +122,18 @@ __host__ std::chrono::duration<double> split_insert_timing(templated_vqf<Key, Va
 
 
 template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper>
-__host__ std::chrono::duration<double> split_insert_timing_cycles(templated_vqf<Key, Val, Wrapper> * my_vqf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * vals, uint64_t nvals, uint64_t * misses, uint64_t * cycles, uint64_t * num_warps){
+__host__ std::chrono::duration<double> split_insert_timing_cycles(bulk_tcf<Key, Val, Wrapper> * my_tcf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * vals, uint64_t nvals, uint64_t * misses, uint64_t * cycles, uint64_t * num_warps){
 
 
-	uint64_t num_blocks = my_vqf->get_num_blocks();
+	uint64_t num_blocks = my_tcf->get_num_blocks();
 
-	uint64_t num_teams = my_vqf->get_num_teams();
+	uint64_t num_teams = my_tcf->get_num_teams();
 
 	cudaDeviceSynchronize();
 
 	auto start = std::chrono::high_resolution_clock::now();
 
-	my_vqf->attach_lossy_buffers_cycles(large_keys, vals, nvals, num_blocks, cycles, num_warps);
+	my_tcf->attach_lossy_buffers_cycles(large_keys, vals, nvals, num_blocks, cycles, num_warps);
 
 
 	cudaDeviceSynchronize();
@@ -144,7 +144,7 @@ __host__ std::chrono::duration<double> split_insert_timing_cycles(templated_vqf<
 	auto midpoint = std::chrono::high_resolution_clock::now();
 
 
-	my_vqf->bulk_insert_cycles(misses, cycles, num_teams, num_warps);
+	my_tcf->bulk_insert_cycles(misses, cycles, num_teams, num_warps);
 	
 
 	cudaDeviceSynchronize();
@@ -181,7 +181,7 @@ __host__ std::chrono::duration<double> split_insert_timing_cycles(templated_vqf<
 
 
 template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper>
-__host__ std::chrono::duration<double> bulk_query_timing(templated_vqf<Key, Val, Wrapper> * my_vqf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * keys, uint64_t nvals, uint64_t * misses){
+__host__ std::chrono::duration<double> bulk_query_timing(bulk_tcf<Key, Val, Wrapper> * my_tcf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * keys, uint64_t nvals, uint64_t * misses){
 
 
 
@@ -190,9 +190,9 @@ __host__ std::chrono::duration<double> bulk_query_timing(templated_vqf<Key, Val,
 	cudaMalloc((void **) & hits, nvals*sizeof(bool));
 
 
-	uint64_t num_blocks = my_vqf->get_num_blocks();
+	uint64_t num_blocks = my_tcf->get_num_blocks();
 
-	uint64_t num_teams = my_vqf->get_num_teams();
+	uint64_t num_teams = my_tcf->get_num_teams();
 
 	cudaDeviceSynchronize();
 
@@ -200,8 +200,8 @@ __host__ std::chrono::duration<double> bulk_query_timing(templated_vqf<Key, Val,
 
 
 	
-	my_vqf->attach_lossy_buffers(large_keys, keys, nvals, num_blocks);
-	my_vqf->bulk_query(hits, num_teams);
+	my_tcf->attach_lossy_buffers(large_keys, keys, nvals, num_blocks);
+	my_tcf->bulk_query(hits, num_teams);
 
 	cudaDeviceSynchronize();
 	//and insert
@@ -238,7 +238,7 @@ __host__ std::chrono::duration<double> bulk_query_timing(templated_vqf<Key, Val,
 
 
 template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper>
-__host__ std::chrono::duration<double> fp_timing(templated_vqf<Key, Val, Wrapper> * my_vqf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * keys, uint64_t nvals, uint64_t * misses){
+__host__ std::chrono::duration<double> fp_timing(bulk_tcf<Key, Val, Wrapper> * my_tcf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * keys, uint64_t nvals, uint64_t * misses){
 
 
 
@@ -248,9 +248,9 @@ __host__ std::chrono::duration<double> fp_timing(templated_vqf<Key, Val, Wrapper
 	cudaMalloc((void **) & hits, nvals*sizeof(bool));
 
 
-	uint64_t num_blocks = my_vqf->get_num_blocks();
+	uint64_t num_blocks = my_tcf->get_num_blocks();
 
-	uint64_t num_teams = my_vqf->get_num_teams();
+	uint64_t num_teams = my_tcf->get_num_teams();
 
 	cudaDeviceSynchronize();
 
@@ -258,8 +258,8 @@ __host__ std::chrono::duration<double> fp_timing(templated_vqf<Key, Val, Wrapper
 
 
 	
-	my_vqf->attach_lossy_buffers(large_keys, keys, nvals, num_blocks);
-	my_vqf->bulk_query(hits, num_teams);
+	my_tcf->attach_lossy_buffers(large_keys, keys, nvals, num_blocks);
+	my_tcf->bulk_query(hits, num_teams);
 
 	cudaDeviceSynchronize();
 	//and insert
@@ -333,9 +333,9 @@ template <typename T>
 __host__ T * load_main_data(uint64_t nitems){
 
 
-	char main_location[] = "/global/cscratch1/sd/hunterm/vqf_data/main_data-32-data.txt";
+	char main_location[] = "/global/cscratch1/sd/hunterm/tcf_data/main_data-32-data.txt";
 
-	//char main_location[] = "/pscratch/sd/h/hunterm/vqf_data/main_data-32-data.txt";
+	//char main_location[] = "/pscratch/sd/h/hunterm/tcf_data/main_data-32-data.txt";
 
 	char * vals = (char * ) malloc(nitems * sizeof(T));
 
@@ -385,9 +385,9 @@ template <typename T>
 __host__ T * load_alt_data(uint64_t nitems){
 
 
-	char main_location[] = "/global/cscratch1/sd/hunterm/vqf_data/fp_data-32-data.txt";
+	char main_location[] = "/global/cscratch1/sd/hunterm/tcf_data/fp_data-32-data.txt";
 
-	//char main_location[] = "/pscratch/sd/h/hunterm/vqf_data/fp_data-32-data.txt";
+	//char main_location[] = "/pscratch/sd/h/hunterm/tcf_data/fp_data-32-data.txt";
 
 
 	char * vals = (char * ) malloc(nitems * sizeof(T));
@@ -451,7 +451,7 @@ int main(int argc, char** argv) {
 
 
 	//comment this out
-	keys = load_main_data<uint64_t>(nitems);
+	keys = generate_data<uint64_t>(nitems);
 
 	//keys = load_main_data<main_data_type>(nitems);
 
@@ -461,7 +461,7 @@ int main(int argc, char** argv) {
 	//main_data_type * fp_vals;
 
 	//generate fp data to see comparison with true inserts
-	fp_keys = load_alt_data<uint64_t>(nitems);
+	fp_keys = generate_data<uint64_t>(nitems);
 
 
 
@@ -494,7 +494,7 @@ int main(int argc, char** argv) {
 
 	misses[0] = 0;
 
-	#ifdef COUNTING_CYCLES
+	#if COUNTING_CYCLES
 
 	uint64_t * cycles;
 
@@ -520,10 +520,10 @@ int main(int argc, char** argv) {
 	#endif
 
 
-	//change the way vqf is built to better suit test and use cases? TODO with active reconstruction for exact values / struct support
+	//change the way tcf is built to better suit test and use cases? TODO with active reconstruction for exact values / struct support
 	
 	//quad_hash_table * ht =  build_hash_table(1ULL << nbits);
-	templated_vqf<key_type> * vqf = build_vqf<key_type>( (uint64_t)(1ULL << nbits));
+	bulk_tcf<key_type> * tcf = build_tcf<key_type>( (uint64_t)(1ULL << nbits));
 
 	//std::chrono::duration<double> diff = std::chrono::nanoseconds::zero();
 
@@ -575,20 +575,20 @@ int main(int argc, char** argv) {
 
 		//launch inserts
 
-		#ifdef COUNTING_CYCLES
+		#if COUNTING_CYCLES
 
 		if (batch == 0){
-			insert_diff[batch] = split_insert_timing_cycles<key_type>(vqf, dev_keys, short_keys, items_to_insert, misses, cycles, num_warps);
+			insert_diff[batch] = split_insert_timing_cycles<key_type>(tcf, dev_keys, short_keys, items_to_insert, misses, cycles, num_warps);
 
 		} else {
-			insert_diff[batch] = split_insert_timing<key_type>(vqf, dev_keys, short_keys, items_to_insert, misses);
+			insert_diff[batch] = split_insert_timing<key_type>(tcf, dev_keys, short_keys, items_to_insert, misses);
 
 		}
 		
 
 		#else
 
-		insert_diff[batch] = split_insert_timing<key_type>(vqf, dev_keys, short_keys, items_to_insert, misses);
+		insert_diff[batch] = split_insert_timing<key_type>(tcf, dev_keys, short_keys, items_to_insert, misses);
 
 		#endif
 
@@ -602,7 +602,7 @@ int main(int argc, char** argv) {
 
 
 		//launch queries
-		query_diff[batch] = bulk_query_timing<key_type>(vqf, dev_keys, short_keys, items_to_insert, misses);
+		query_diff[batch] = bulk_query_timing<key_type>(tcf, dev_keys, short_keys, items_to_insert, misses);
 
 
 		cudaDeviceSynchronize();
@@ -615,7 +615,7 @@ int main(int argc, char** argv) {
 
 
 		//false queries
-		fp_diff[batch] = fp_timing<key_type>(vqf, dev_keys, short_keys, items_to_insert, misses);
+		fp_diff[batch] = fp_timing<key_type>(tcf, dev_keys, short_keys, items_to_insert, misses);
 
 
 		cudaDeviceSynchronize();
@@ -769,7 +769,7 @@ int main(int argc, char** argv) {
 	}
 
 
-	#ifdef COUNTING_CYCLES
+	#if COUNTING_CYCLES
 
 	printf("Cycle counts: insert_total, load, distribute, sorting, merging, hashing, set_buffer, set_len\n%llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu\n", cycles[0], cycles[6], cycles[7], cycles[1], cycles[2], cycles[3], cycles[4], cycles[5]);
 
@@ -796,7 +796,7 @@ int main(int argc, char** argv) {
 
 	cudaFree(misses);
 
-	free_vqf(vqf);
+	free_tcf(tcf);
 
 	
 
