@@ -936,7 +936,7 @@ int main(int argc, char** argv) {
 
 		printf("false_lookup performance written!\n");
 
-		fclose(fp_false_lookup);
+		fclose(fp_agg);
 
 
 
