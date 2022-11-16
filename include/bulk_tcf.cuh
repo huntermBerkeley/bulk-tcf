@@ -56,6 +56,9 @@ namespace cg = cooperative_groups;
 
 //cuda templated globals
 
+
+
+
 template <typename Filter, typename Key_type>
 __global__ void hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_type * keys, uint64_t nvals){
 
@@ -73,6 +76,29 @@ __global__ void hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_t
 	key = my_tcf->get_bucket_from_key(key);
 
 	uint64_t new_key = my_tcf->get_reference_from_bucket(key) | keys[tid].get_key();
+
+	//buckets are now sortable!
+	large_keys[tid] = new_key;
+
+}
+
+template <typename Filter, typename Key_type>
+__global__ void hash_all_key_purge_static(uint64_t * large_keys, Key_type * keys, uint64_t nvals, uint64_t ext_num_blocks){
+
+
+	uint64_t tid = threadIdx.x + blockDim.x*blockIdx.x;
+
+	if (tid >= nvals) return;
+
+	uint64_t key = large_keys[tid];
+
+	//shrink the keys
+	keys[tid] = (Key_type) large_keys[tid];
+
+
+	key = Filter::static_get_bucket_from_key(key, ext_num_blocks);
+
+	uint64_t new_key = Filter::static_get_reference_from_bucket(key) | keys[tid].get_key();
 
 	//buckets are now sortable!
 	large_keys[tid] = new_key;
@@ -636,6 +662,75 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 
 	thread_team_block<block_type> * blocks;
 
+	//static version of the code
+	//for large filters,
+	//we need to presort the data
+	//generate presorted list and pass back.
+	__host__ static void host_prep_lossy_buffers(uint64_t * host_large_keys, key_type * host_compressed_keys, uint64_t nitems, uint64_t ext_num_blocks){
+
+
+		uint64_t * large_keys;
+		key_type * compressed_keys;
+
+		cudaMallocManaged((void **)&large_keys, sizeof(uint64_t)*nitems);
+		cudaMallocManaged((void **)&compressed_keys, sizeof(key_type)*nitems);
+
+		cudaMemcpy(large_keys, host_large_keys, sizeof(uint64_t)*nitems, cudaMemcpyHostToDevice);
+		cudaMemcpy(compressed_keys, host_compressed_keys, sizeof(key_type)*nitems, cudaMemcpyHostToDevice);
+
+		cudaDeviceSynchronize();
+
+		hash_all_key_purge_static<bulk_tcf<Key, Val, Wrapper>, key_type><<<(nitems -1)/1024 + 1, 1024>>>(large_keys, compressed_keys, nitems, ext_num_blocks);
+
+		thrust::sort_by_key(thrust::device, large_keys, large_keys+nitems, compressed_keys);
+
+		cudaDeviceSynchronize();
+
+		cudaMemcpy(host_large_keys, large_keys, sizeof(uint64_t)*nitems, cudaMemcpyDeviceToHost);
+		cudaMemcpy(host_compressed_keys, compressed_keys, sizeof(key_type)*nitems, cudaMemcpyDeviceToHost);
+
+		cudaFree(large_keys);
+		cudaFree(compressed_keys);
+
+		return;
+
+		return;
+
+	}
+
+	//static version of the code
+	//for large filters,
+	//we need to presort the data
+	//generate presorted list and pass back.
+	__host__ static void prep_lossy_buffers(uint64_t * host_large_keys, key_type * host_compressed_keys, uint64_t nitems, uint64_t ext_num_blocks){
+
+
+		uint64_t * large_keys;
+		key_type * compressed_keys;
+
+		cudaMalloc((void **)&large_keys, sizeof(uint64_t)*nitems);
+		cudaMalloc((void **)&compressed_keys, sizeof(key_type)*nitems);
+
+		cudaMemcpy(large_keys, host_large_keys, sizeof(uint64_t)*nitems, cudaMemcpyHostToDevice);
+		cudaMemcpy(compressed_keys, host_compressed_keys, sizeof(key_type)*nitems, cudaMemcpyHostToDevice);
+
+		cudaDeviceSynchronize();
+
+		hash_all_key_purge_static<bulk_tcf<Key, Val, Wrapper>, key_type><<<(nitems -1)/1024 + 1, 1024>>>(large_keys, compressed_keys, nitems, ext_num_blocks);
+
+		thrust::sort_by_key(thrust::device, large_keys, large_keys+nitems, compressed_keys);
+
+		cudaDeviceSynchronize();
+
+		cudaMemcpy(host_large_keys, large_keys, sizeof(uint64_t)*nitems, cudaMemcpyDeviceToHost);
+		cudaMemcpy(host_compressed_keys, compressed_keys, sizeof(key_type)*nitems, cudaMemcpyDeviceToHost);
+
+		cudaFree(large_keys);
+		cudaFree(compressed_keys);
+
+		return;
+
+	}
 
 
 	__host__ void attach_lossy_buffers(uint64_t * large_keys, key_type * compressed_keys, uint64_t nitems, uint64_t ext_num_blocks){
@@ -646,6 +741,17 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 
 
 	
+
+		set_buffers_binary<bulk_tcf<Key, Val, Wrapper>, key_type><<<(ext_num_blocks -1)/1024+1, 1024>>>(this, large_keys, compressed_keys, nitems);
+
+		set_buffer_lens<bulk_tcf<Key, Val, Wrapper>, key_type><<<(ext_num_blocks -1)/1024+1, 1024>>>(this, nitems, compressed_keys);
+
+
+	}
+
+
+	__host__ void attach_presorted_buffers(uint64_t * large_keys, key_type * compressed_keys, uint64_t nitems, uint64_t ext_num_blocks){
+
 
 		set_buffers_binary<bulk_tcf<Key, Val, Wrapper>, key_type><<<(ext_num_blocks -1)/1024+1, 1024>>>(this, large_keys, compressed_keys, nitems);
 
@@ -714,6 +820,13 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 
 	}
 
+	__device__ static uint static_get_bucket_from_key(uint64_t key, uint64_t ext_num_blocks){
+
+		key = MurmurHash64A(((void *)&key), sizeof(key), 42) % (ext_num_blocks);
+
+		return key;
+	}
+
 	__device__ uint64_t get_alt_bucket_from_key(key_type key, uint64_t bucket){
 
 		uint64_t new_hash = MurmurHash64A((void *)&key.get_key(), sizeof(Key), 999);
@@ -735,7 +848,29 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 
 	}
 
+	__device__ static uint64_t static_get_bucket_from_reference(uint64_t key, uint64_t ext_num_blocks){
+
+
+		const uint key_size = 8ULL * sizeof(Key);
+
+		if constexpr (key_size >= 64) return key % ext_num_blocks;
+		
+		return key >> (8ULL *sizeof(Key));
+
+	}
+
 	__device__ uint64_t get_reference_from_bucket(uint64_t hash){
+
+
+		const uint key_size = 8ULL * sizeof(Key);
+
+		if constexpr (key_size >= 64) return 0;
+		
+		return hash << (8ULL *sizeof(Key));
+
+	}
+
+	__device__ uint64_t static static_get_reference_from_bucket(uint64_t hash){
 
 
 		const uint key_size = 8ULL * sizeof(Key);
@@ -972,6 +1107,16 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 
    		
 
+
+	}
+
+	__host__ __device__ static uint64_t static_get_num_blocks(uint64_t nitems){
+
+	uint64_t num_teams = (nitems - 1)/(BLOCKS_PER_THREAD_BLOCK*block_type::max_size()) + 1;
+
+	uint64_t num_blocks = num_teams*BLOCKS_PER_THREAD_BLOCK;
+
+	return num_blocks;
 
 	}
 
@@ -2638,6 +2783,7 @@ __host__ void free_tcf(bulk_tcf<Key, Val, Wrapper> * tcf){
 
 
 }
+
 
 
 template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper >

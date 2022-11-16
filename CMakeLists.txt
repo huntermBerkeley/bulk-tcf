@@ -35,3 +35,4 @@ target_link_libraries(bulk_tcf INTERFACE ssl crypto)
 
 
 ConfigureExecutable(batched_template_tests "${CMAKE_CURRENT_SOURCE_DIR}/src/batched_template_tests.cu" "${CMAKE_BINARY_DIR}")
+ConfigureExecutable(presorted_template_tests "${CMAKE_CURRENT_SOURCE_DIR}/src/presorted_template_tests.cu" "${CMAKE_BINARY_DIR}")
