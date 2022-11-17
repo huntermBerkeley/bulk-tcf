@@ -702,7 +702,10 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 	//for large filters,
 	//we need to presort the data
 	//generate presorted list and pass back.
-	__host__ static void prep_lossy_buffers(uint64_t * host_large_keys, key_type * host_compressed_keys, uint64_t nitems, uint64_t ext_num_blocks){
+	//this returns the time taken on device for these ops
+	//you could clean it up and run the whole thing on device to get this timing
+	//but I opted to measure here and convert back to host buffers so that the rest of the test file was unchanged.
+	__host__ static std::chrono::duration<double> prep_lossy_buffers(uint64_t * host_large_keys, key_type * host_compressed_keys, uint64_t nitems, uint64_t ext_num_blocks){
 
 
 		uint64_t * large_keys;
@@ -716,11 +719,15 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 
 		cudaDeviceSynchronize();
 
+		auto prep_start = std::chrono::high_resolution_clock::now();
+
 		hash_all_key_purge_static<bulk_tcf<Key, Val, Wrapper>, key_type><<<(nitems -1)/1024 + 1, 1024>>>(large_keys, compressed_keys, nitems, ext_num_blocks);
 
 		thrust::sort_by_key(thrust::device, large_keys, large_keys+nitems, compressed_keys);
 
 		cudaDeviceSynchronize();
+
+		auto prep_end = std::chrono::high_resolution_clock::now();
 
 		cudaMemcpy(host_large_keys, large_keys, sizeof(uint64_t)*nitems, cudaMemcpyDeviceToHost);
 		cudaMemcpy(host_compressed_keys, compressed_keys, sizeof(key_type)*nitems, cudaMemcpyDeviceToHost);
@@ -728,7 +735,7 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 		cudaFree(large_keys);
 		cudaFree(compressed_keys);
 
-		return;
+		return prep_end-prep_start;
 
 	}
 

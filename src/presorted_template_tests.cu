@@ -554,25 +554,17 @@ int main(int argc, char** argv) {
 
 	if (nbits <= 28 || (gpu_arch >= 80 && nbits <= 30)){
 
-	auto prep_start = std::chrono::high_resolution_clock::now();
+		presort_insert_diff = bulk_tcf<key_type>::prep_lossy_buffers(keys, short_keys, nitems, ext_num_blocks);
 
-	bulk_tcf<key_type>::prep_lossy_buffers(keys, short_keys, nitems, ext_num_blocks);
+		cudaDeviceSynchronize();
 
-	cudaDeviceSynchronize();
+		presort_fp_diff = bulk_tcf<key_type>::prep_lossy_buffers(fp_keys, fp_short_keys, nitems, ext_num_blocks);
 
-	auto prep_mid = std::chrono::high_resolution_clock::now();
-
-
-	bulk_tcf<key_type>::prep_lossy_buffers(fp_keys, fp_short_keys, nitems, ext_num_blocks);
-
-	cudaDeviceSynchronize();
-
-	auto prep_end = std::chrono::high_resolution_clock::now();
+		cudaDeviceSynchronize();
 
 
-	presort_insert_diff = prep_mid-prep_start;
-	presort_query_diff = prep_mid-prep_start;
-	presort_fp_diff = prep_end-prep_mid;
+		presort_query_diff = presort_insert_diff;
+	
 
 	} else {
 
@@ -624,6 +616,9 @@ int main(int argc, char** argv) {
 
 
 	cudaDeviceSynchronize();
+
+
+	printf("Insert time was %f\n", 1.0*presort_insert_diff.count());
 
 
 
