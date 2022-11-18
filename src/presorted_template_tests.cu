@@ -581,22 +581,21 @@ int main(int argc, char** argv) {
 
 		cudaDeviceSynchronize();
 
-		auto prep_start = std::chrono::high_resolution_clock::now();
 
-		bulk_tcf<key_type>::prep_lossy_buffers(tiny_keys, tiny_short_keys, tiny_nitems, tiny_ext_num_blocks);
+		auto minisort_duration = bulk_tcf<key_type>::prep_lossy_buffers(tiny_keys, tiny_short_keys, tiny_nitems, tiny_ext_num_blocks);
+
 
 		cudaDeviceSynchronize();
 
-		auto prep_end = std::chrono::high_resolution_clock::now();
 
 		printf("Mini Sort finished.\n");
 
 		printf("Unified Memory sort of large arrays is next. This may take a while.\n");
 		std::cout << std::flush;
 
-		presort_insert_diff = prep_end-prep_start + prep_end-prep_start;
-		presort_query_diff = prep_end-prep_start + prep_end-prep_start;
-		presort_fp_diff = prep_end-prep_start + prep_end-prep_start;
+		presort_insert_diff = 2*minisort_duration;
+		presort_query_diff = 2*minisort_duration;
+		presort_fp_diff = 2*minisort_duration;
 
 		//now that timing is established, sort using host to preserve memory
 
