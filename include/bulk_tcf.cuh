@@ -58,8 +58,35 @@ namespace cg = cooperative_groups;
 
 
 
-
+//preserving this for when I destroy the timeline
 template <typename Filter, typename Key_type>
+__global__ void old_hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_type * keys, uint64_t nvals){
+
+
+	uint64_t tid = threadIdx.x + blockDim.x*blockIdx.x;
+
+	if (tid >= nvals) return;
+
+	uint64_t key = large_keys[tid];
+
+	//shrink the keys
+	//this is valid and preserves query values.
+	keys[tid].set_key(large_keys[tid]);
+
+
+	//uint64_t hashed_key = my_tcf->hash_key(large_keys[tid]);
+
+	key = my_tcf->get_bucket_from_key(key);
+
+	uint64_t new_key = my_tcf->get_reference_from_bucket(key) | keys[tid].get_key();
+
+	//buckets are now sortable!
+	large_keys[tid] = new_key;
+
+
+}
+
+
 __global__ void hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_type * keys, uint64_t nvals){
 
 
@@ -70,8 +97,11 @@ __global__ void hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_t
 	uint64_t key = large_keys[tid];
 
 	//shrink the keys
-	keys[tid] = (Key_type) large_keys[tid];
+	//this is valid and preserves query values.
+	keys[tid].set_key(large_keys[tid]);
 
+
+	//uint64_t hashed_key = my_tcf->hash_key(large_keys[tid]);
 
 	key = my_tcf->get_bucket_from_key(key);
 
@@ -80,7 +110,9 @@ __global__ void hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_t
 	//buckets are now sortable!
 	large_keys[tid] = new_key;
 
+
 }
+
 
 template <typename Filter, typename Key_type>
 __global__ void hash_all_key_purge_static(uint64_t * large_keys, Key_type * keys, uint64_t nvals, uint64_t ext_num_blocks){
@@ -104,6 +136,9 @@ __global__ void hash_all_key_purge_static(uint64_t * large_keys, Key_type * keys
 	large_keys[tid] = new_key;
 
 }
+
+
+
 
 
 template<typename Filter, typename Key_type>
@@ -564,6 +599,32 @@ __global__ void sorted_bulk_insert_kernel(Filter * tcf, uint64_t * misses){
 
 }
 
+
+template <typename Filter>
+__global__ void bulk_get_fill_kernel(Filter * tcf, uint64_t * counter, uint64_t num_blocks){
+
+	uint64_t tid = threadIdx.x + blockIdx.x*blockDim.x;
+
+	if (tid >=num_blocks) return;
+
+
+	//TODO double check m
+
+
+	//tcf->sorted_mini_filter_block(misses);
+
+	uint64_t fill = tcf->get_block_fill(tid);
+
+	atomicAdd((unsigned long long int *)counter, fill);
+	//tcf->persistent_dev_insert(misses);
+
+	return;
+
+	
+
+
+}
+
 template <typename Filter>
 __global__ void sorted_bulk_insert_kernel_cycles(Filter * tcf, uint64_t * misses, uint64_t * cycles){
 
@@ -607,6 +668,26 @@ __global__ void bulk_sorted_query_kernel(Filter * tcf, bool * hits){
 	if (teamID >= tcf->num_teams) return;
 
 	tcf->mini_filter_bulk_queries(hits);
+}
+
+
+template<typename Filter>
+__global__ void bulk_sorted_delete_kernel(Filter * tcf, bool * hits){
+
+
+	uint64_t tid = threadIdx.x + blockIdx.x*blockDim.x;
+
+	uint64_t teamID = tid / (BLOCK_SIZE);
+
+	#if DEBUG_ASSERTS
+
+	assert(teamID == blockIdx.x);
+
+	#endif
+
+	if (teamID >= tcf->num_teams) return;
+
+	tcf->mini_filter_bulk_deletes(hits);
 }
 
 
@@ -817,30 +898,63 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 	}
 
 
+	//generate hash
+	//upper bits of hash used for determining bucket.
+	//s.t. all buckets are hashed appropriately / evenly.
+	static __device__ uint64_t hash_key(uint64_t key){
 
+		//key = MurmurHash64A(((void *)&key), sizeof(key), 42)
+
+		//const uint key_size = (sizeof(key_type)*8);
+
+		key = hash_64(key, ~0ULL);
+
+		return key;
+	}
+
+
+	//this hash is destructive, despite only being used in one place.
 	//device functions
 	__device__ uint64_t get_bucket_from_key(uint64_t key){
 
-		key = MurmurHash64A(((void *)&key), sizeof(key), 42) % (num_blocks);
+		//key = MurmurHash64A(((void *)&key), sizeof(key), 42) % (num_blocks);
+
+		key = hash_64(key, ~0ULL) % (num_blocks);
 
 		return key;
 
 	}
 
-	__device__ static uint static_get_bucket_from_key(uint64_t key, uint64_t ext_num_blocks){
+	__device__ uint64_t get_bucket_from_hash(uint64_t hash){
 
-		key = MurmurHash64A(((void *)&key), sizeof(key), 42) % (ext_num_blocks);
+		const uint64_t dividing_region = (~0ULL)/num_blocks;
+
+	}
+
+	__device__ uint64_t get_block_fill(uint64_t blockID){
+		return block_counters[blockID];
+	}
+
+	//does this fuck it up?
+	__device__ static uint64_t static_get_bucket_from_key(uint64_t key, uint64_t ext_num_blocks){
+
+		//key = MurmurHash64A(((void *)&key), sizeof(key), 42) % (ext_num_blocks);
+
+		key = hash_64(key, ~0ULL) % (ext_num_blocks);
 
 		return key;
 	}
 
+	//updated to use XOR trick
 	__device__ uint64_t get_alt_bucket_from_key(key_type key, uint64_t bucket){
 
-		uint64_t new_hash = MurmurHash64A((void *)&key.get_key(), sizeof(Key), 999);
+		//uint64_t new_hash = MurmurHash64A((void *)&key.get_key(), sizeof(Key), 999);
 
-		uint64_t new_bucket =  MurmurHash64A(((void *)&bucket), sizeof(bucket), 444);
+		//uint64_t new_bucket =  MurmurHash64A(((void *)&bucket), sizeof(bucket), 444);
 
-		return new_hash & new_bucket; 
+		//return new_hash & new_bucket; 
+
+		return (bucket ^ key.get_key());
 	}
 
 		//device functions
@@ -2635,6 +2749,115 @@ __device__ void dump_all_buffers_into_local_block(thread_team_block<block_type> 
 	}
 
 
+	__host__ void bulk_delete(bool * hits, uint64_t ext_num_teams){
+
+
+		bulk_sorted_delete_kernel<bulk_tcf<Key, Val, Wrapper>><<<ext_num_teams, BLOCK_SIZE>>>(this, hits);
+
+
+
+	}
+
+
+	__host__ void get_fill(uint64_t * counter, uint64_t num_blocks){
+
+		
+		bulk_get_fill_kernel<bulk_tcf<Key, Val, Wrapper>><<<(num_blocks-1)/BLOCK_SIZE+1, BLOCK_SIZE>>>(this, counter, num_blocks);
+		
+	}
+
+
+	__device__ bool mini_filter_bulk_deletes(bool * hits){
+
+		__shared__ thread_team_block<block_type> block;
+
+		//uint64_t tid = threadIdx.x + blockDim.x*blockIdx.x;
+
+		uint64_t blockID = blockIdx.x;
+
+		int warpID = threadIdx.x / 32;
+
+		int threadID = threadIdx.x % 32;
+
+
+		if (blockID >= num_teams) return false;
+
+
+
+		for (int i = warpID; i < BLOCKS_PER_THREAD_BLOCK; i+=WARPS_PER_BLOCK){
+
+			block.internal_blocks[i] = blocks[blockID].internal_blocks[i]; 
+			//printf("i: %d\n",i);
+			
+		}
+
+		//separate these pulls so that the queries can be encapsulated
+
+		__syncthreads();
+
+		for (int i = warpID; i < BLOCKS_PER_THREAD_BLOCK; i+=WARPS_PER_BLOCK){
+
+			//global buffer blockID*BLOCKS_PER_THREAD_BLOCK + i
+
+			uint64_t global_buffer = blockID*BLOCKS_PER_THREAD_BLOCK+i;
+
+			uint64_t global_offset = (buffers[global_buffer] - buffers[0]);
+
+			bool * hits_ptr = hits + global_offset;
+
+			block.internal_blocks[i].sorted_bulk_delete(block_counters[global_buffer], threadID, buffers[global_buffer], hits_ptr, buffer_sizes[global_buffer]);
+
+		}
+
+		//stop double write bug
+		__syncthreads();
+
+
+		for (int i = warpID; i < BLOCKS_PER_THREAD_BLOCK; i+=WARPS_PER_BLOCK){
+
+			uint64_t global_buffer = blockID*BLOCKS_PER_THREAD_BLOCK+i;
+
+			uint64_t global_offset = (buffers[global_buffer] - buffers[0]);
+
+			bool * hits_ptr = hits + global_offset;
+
+
+			for (int j = threadID; j < buffer_sizes[global_buffer]; j+=32){
+
+				if (!hits_ptr[j]){
+
+					key_type item = buffers[global_buffer][j];
+
+					int alt_bucket = get_alt_bucket_from_key(item, global_buffer) % BLOCKS_PER_THREAD_BLOCK;
+
+					if (alt_bucket == i) alt_bucket = (alt_bucket +1) % BLOCKS_PER_THREAD_BLOCK;
+
+					hits_ptr[j] = block.internal_blocks[alt_bucket].individual_delete(item, block_counters[blockID*BLOCKS_PER_THREAD_BLOCK+alt_bucket]);
+				}
+
+			}
+		}
+
+
+		//finally, compress and write out.
+		__syncthreads();
+
+		for (int i = warpID; i < BLOCKS_PER_THREAD_BLOCK; i+=WARPS_PER_BLOCK){
+
+			//this version does not yet support updating the counts.
+			int new_counter = blocks[blockID].internal_blocks[i].dump_buffer_compress(block.internal_blocks[i].tags, block_counters[blockID*BLOCKS_PER_THREAD_BLOCK+i], warpID, threadID, dividing_line);
+
+			if (threadID == 31){
+				block_counters[blockID*BLOCKS_PER_THREAD_BLOCK+i] = new_counter;
+			}
+
+		}
+
+		return true;
+
+	}
+
+
 
 
 	__device__ bool mini_filter_bulk_queries(bool * hits){
@@ -2753,8 +2976,6 @@ __device__ void dump_all_buffers_into_local_block(thread_team_block<block_type> 
 	}
 
 
-
-
 	//these bad boys are exact!
 	//__host__ bulk_insert(key_type * keys);
 	
@@ -2790,6 +3011,7 @@ __host__ void free_tcf(bulk_tcf<Key, Val, Wrapper> * tcf){
 
 
 }
+
 
 
 

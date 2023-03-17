@@ -5,6 +5,7 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 #include "bulk_tcf_metadata.cuh"
+#include "bulk_tcf_hashutil.cuh"
 #include <variant>
 
 
@@ -90,10 +91,20 @@ struct __attribute__ ((__packed__)) key_val_pair: private Wrapper<Val> {
 			this->key = new_key;
 		}
 
+		__host__ __device__ bool reset_key_atomic(Key ext_key){
+
+			return typed_atomic_write(&get_key(), ext_key, Key{0ULL});
+
+		}
+
 		__host__ __device__ void pack_into_pair(Key new_key, Val new_val){
 
 			set_val(new_val);
 			set_key(new_key);
+		}
+
+		__host__ __device__ bool is_empty(){
+			return (get_key() == 0ULL);
 		}
 
 

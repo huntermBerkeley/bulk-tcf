@@ -298,6 +298,62 @@ __host__ std::chrono::duration<double> fp_timing(bulk_tcf<Key, Val, Wrapper> * m
    return diff;
 }
 
+template <typename Key, typename Val = empty, template<typename T> typename Wrapper = empty_wrapper>
+__host__ std::chrono::duration<double> bulk_delete_timing(bulk_tcf<Key, Val, Wrapper> * my_tcf, uint64_t * large_keys, key_val_pair<Key, Val, Wrapper> * keys, uint64_t nvals, uint64_t * misses){
+
+
+
+	bool * hits;
+
+	cudaMalloc((void **) & hits, nvals*sizeof(bool));
+
+
+	uint64_t num_blocks = my_tcf->get_num_blocks();
+
+	uint64_t num_teams = my_tcf->get_num_teams();
+
+	cudaDeviceSynchronize();
+
+	auto start = std::chrono::high_resolution_clock::now();
+
+
+	
+	my_tcf->attach_lossy_buffers(large_keys, keys, nvals, num_blocks);
+	my_tcf->bulk_delete(hits, num_teams);
+
+	cudaDeviceSynchronize();
+	//and insert
+
+	auto end = std::chrono::high_resolution_clock::now();
+
+
+
+	//check hits
+
+	check_hits<<<(nvals - 1)/ 1024 + 1, 1024>>>(hits, misses, nvals);
+
+	cudaDeviceSynchronize();
+
+	cudaFree(hits);
+
+  	std::chrono::duration<double> diff = end-start;
+
+
+  	std::cout << "Deleted " << nvals << " in " << diff.count() << " seconds\n";
+
+  	printf("Bulk Deletes per second: %f\n", nvals/diff.count());
+
+  	printf("Misses %llu\n", misses[0]);
+
+  	cudaDeviceSynchronize();
+
+  	misses[0] = 0;
+
+  	cudaDeviceSynchronize();
+
+  	return diff;
+}
+
 
 template <typename T>
 __host__ T * generate_data(uint64_t nitems){
@@ -531,7 +587,8 @@ int main(int argc, char** argv) {
 	std::chrono::duration<double>  * insert_diff = (std::chrono::duration<double>  *) malloc(num_batches*sizeof(std::chrono::duration<double>));
 	std::chrono::duration<double>  * query_diff = (std::chrono::duration<double>  *) malloc(num_batches*sizeof(std::chrono::duration<double>));
 	std::chrono::duration<double>  * fp_diff = (std::chrono::duration<double>  *) malloc(num_batches*sizeof(std::chrono::duration<double>));
-
+	std::chrono::duration<double>  * delete_diff = (std::chrono::duration<double>  *) malloc(num_batches*sizeof(std::chrono::duration<double>));
+	
 	uint64_t * batch_amount = (uint64_t *) malloc(num_batches*sizeof(uint64_t));
 
 
@@ -621,6 +678,20 @@ int main(int argc, char** argv) {
 		cudaDeviceSynchronize();
 
 
+
+		cudaMemcpy(dev_keys, keys + start, items_to_insert*sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+
+		cudaDeviceSynchronize();
+
+
+		//launch queries
+		delete_diff[batch] = bulk_delete_timing<key_type>(tcf, dev_keys, short_keys, items_to_insert, misses);
+
+
+		cudaDeviceSynchronize();
+
+
 		//keep some organized spacing
 		printf("\n\n");
 
@@ -650,6 +721,12 @@ int main(int argc, char** argv) {
 		summed_fp_diff += fp_diff[i];
 	}
 
+	std::chrono::duration<double> summed_delete_diff = std::chrono::nanoseconds::zero();
+
+	for (int i =0; i < num_batches;i++){
+		summed_delete_diff += delete_diff[i];
+	}
+
 	printf("Tests Finished.\n");
 
 	std::cout << "Queried " << nitems << " in " << summed_insert_diff.count() << " seconds\n";
@@ -665,6 +742,7 @@ int main(int argc, char** argv) {
 		char filename_insert[256];
 		char filename_lookup[256];
 		char filename_false_lookup[256];
+		char filename_delete[256];
 		char filename_aggregate[256];
 
 		const char * insert_op = "_insert_";
@@ -679,6 +757,11 @@ int main(int argc, char** argv) {
 
 		snprintf(filename_false_lookup, strlen(dir) + strlen(argv[3]) + strlen(fp_ops) + strlen(argv[1]) + strlen(argv[2]) + 2, "%s%s%s%s_%s", dir, argv[3], fp_ops, argv[1], argv[2]);
 
+		const char * delete_op = "_delete_";
+
+		snprintf(filename_delete, strlen(dir) + strlen(argv[3]) + strlen(fp_ops) + strlen(argv[1]) + strlen(argv[2]) + 2, "%s%s%s%s_%s", dir, argv[3], delete_op, argv[1], argv[2]);
+
+
 		const char * agg_ops = "_aggregate_";
 
 		snprintf(filename_aggregate, strlen(dir) + strlen(argv[3]) + strlen(agg_ops)+ strlen(argv[1]) + strlen(argv[2]) + 2, "%s%s%s%s_%s", dir, argv[3], agg_ops, argv[1], argv[2]);
@@ -687,6 +770,7 @@ int main(int argc, char** argv) {
 		FILE *fp_insert = fopen(filename_insert, "w");
 		FILE *fp_lookup = fopen(filename_lookup, "w");
 		FILE *fp_false_lookup = fopen(filename_false_lookup, "w");
+		FILE *fp_delete = fopen(filename_delete, "w");
 		FILE *fp_agg = fopen(filename_aggregate, "w");
 
 		if (fp_insert == NULL) {
@@ -701,6 +785,11 @@ int main(int argc, char** argv) {
 
 		if (fp_false_lookup == NULL) {
 			printf("Can't open the data file %s\n", filename_false_lookup);
+			exit(1);
+		}
+
+		if (fp_delete == NULL) {
+			printf("Can't open the data file %s\n", filename_delete);
 			exit(1);
 		}
 
@@ -748,6 +837,19 @@ int main(int argc, char** argv) {
 		printf("false_lookup performance written!\n");
 
 		fclose(fp_false_lookup);
+
+
+		printf("Writing results to file: %s\n",  filename_delete);
+
+		fprintf(fp_delete, "x_0 y_0\n");
+		for (int i = 0; i < num_batches; i++){
+			fprintf(fp_delete, "%d", i*100/num_batches);
+
+			fprintf(fp_delete, " %f\n", batch_amount[i]/fp_diff[i].count());
+		}
+		printf("Delete performance written!\n");
+
+		fclose(fp_delete);
 
 
 		printf("Writing results to file: %s\n",  filename_aggregate);
@@ -799,6 +901,7 @@ int main(int argc, char** argv) {
 	free_tcf(tcf);
 
 	
+	//free counters	
 
 	return 0;
 

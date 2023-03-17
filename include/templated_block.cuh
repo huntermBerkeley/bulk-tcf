@@ -5,6 +5,7 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 #include "bulk_tcf_metadata.cuh"
+#include "bulk_tcf_hashutil.cuh"
 #include "bulk_tcf_key_val_pair.cuh"
 #include <stdio.h>
 #include <assert.h>
@@ -377,6 +378,113 @@ struct __attribute__ ((__packed__)) templated_block {
 
 	}
 
+	//old buffer contains sections with spaces. We first need to count how many spaces there are
+	//then dump without the spaces.
+	//uses a warp-level reduction to perform this.
+	__device__ int dump_buffer_compress(Tag_type * old_buffer, int buffer_count, const int teamID, const int warpID, uint64_t dividing_line){
+
+
+		//generate start and end zone for every thread.
+
+		__shared__ int buffer_counters [WARPS_PER_BLOCK*32];
+
+		__shared__ int output_counters [WARPS_PER_BLOCK*32];
+
+	
+
+		//__shared__ int merged_counters[WARPS_PER_BLOCK*32];
+		//start of merge
+
+
+		buffer_counters[teamID*32+warpID] = 0;	
+
+
+		output_counters[teamID*32+warpID] = 0;
+
+
+
+
+		int start = warpID*buffer_count/32;
+
+		int end = (warpID+1)*buffer_count/32;
+
+		if (warpID == 31) end = buffer_count;
+
+		__syncwarp();
+
+		for (int i = start; i < end; i++){
+
+
+			if (old_buffer[i].is_empty()) continue;
+
+			int index = (old_buffer[i]) / dividing_line;
+
+			#if DEBUG_ASSERTS
+
+			assert(teamID*32 + index < 32*WARPS_PER_BLOCK);
+			
+			#endif
+
+			atomicAdd(& buffer_counters[teamID*32 + index], 1);
+
+		}
+
+		__syncwarp();
+
+		int buffer_read = buffer_counters[teamID*32+warpID];
+
+		int prefix_sum = buffer_read;
+
+
+		for (int i =1; i<=16; i*=2){
+
+			int n = __shfl_up_sync(0xffffffff, prefix_sum, i, 32);
+
+			if ((warpID) >= i) prefix_sum +=n;
+
+		}
+
+		int max_length = prefix_sum;
+
+		//subtracting read gives us an initial start
+		prefix_sum = prefix_sum-buffer_read;
+
+		//int buffer_start = prefix_sum;
+
+		//int buffer_length = buffer_read;
+
+		buffer_counters[teamID*32+warpID] = prefix_sum;
+
+		__syncwarp();
+
+		start = warpID*buffer_count/32;
+
+		end = (warpID+1)*buffer_count/32;
+
+		if (warpID == 31) end = buffer_count;
+
+
+		for (int i = start; i < end; i++){
+
+			if (old_buffer[i].is_empty()) continue;
+
+			int index = (old_buffer[i]) / dividing_line;
+
+			int prefix_start = buffer_counters[teamID*32+index];
+
+			int my_start = atomicAdd(&output_counters[teamID*32+index], 1);
+
+			tags[prefix_start+my_start] = old_buffer[i];
+
+		}
+
+
+		return max_length;
+
+
+
+	}
+
 
 	__device__ void sorted_bulk_query(int tag_count, int warpID, Tag_type * items, bool * found, uint64_t nitems){
 
@@ -404,6 +512,74 @@ struct __attribute__ ((__packed__)) templated_block {
 				left++;
 
 				if (left>=nitems) return;
+
+			} else if (items[left] < tags[right]){
+				found[left] = false;
+				left++;
+
+				if (left>=nitems) return;
+			} else {
+
+
+				right ++;
+
+				if (right >= tag_count){
+
+
+					for (int i = left; i < nitems; i++){
+
+						found[i] = false;
+					}
+
+					return;
+				}
+			}
+		}
+
+
+	}
+
+
+	//to delete,
+	__device__ void sorted_bulk_delete(int tag_count, int warpID, Tag_type * items, bool * found, uint64_t nitems){
+
+
+		#if DEBUG_ASSERTS
+
+		assert(assert_sorted<Tag_type>(tags, tag_count));
+		assert(assert_sorted<Tag_type>(items, nitems));
+
+		#endif
+
+		if (tag_count == 0 || nitems == 0) return;
+
+		int left = 0;
+		int right = 0;
+
+
+		while (true){
+
+
+
+			if (items[left] == tags[right]){
+
+				found[left] = true;
+				tags[right] = 0;
+
+				//delete by setting to 0, and move on
+				//not allowed to delete multiple keys simultaneously
+				right++;
+				left++;
+
+				if (left>=nitems) return;
+				if (right>=tag_count){
+
+
+					for (int i =left; i < nitems; i++){
+						found[i] = false;
+					}
+					return;
+				}
 
 			} else if (items[left] < tags[right]){
 				found[left] = false;
@@ -482,9 +658,33 @@ struct __attribute__ ((__packed__)) templated_block {
 
 	}
 
+	__device__ bool individual_delete(Tag_type item, int fill){
+
+
+		for (int i = 0; i< fill; i++){
+
+
+			if (tags[i] == item){
+
+				if (tags[i].reset_key_atomic(item.get_key())){
+					return true;
+				}
+
+			}
+
+		}
+
+		return false;
+
+	}
+
 
 
 };
+
+
+
+
 
 
 template<typename Tag_type>
