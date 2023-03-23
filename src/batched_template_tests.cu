@@ -618,7 +618,7 @@ int main(int argc, char** argv) {
 		uint64_t items_to_insert = end-start;
 
 
-		assert(items_to_insert < items_per_batch);
+		assert(items_to_insert <= items_per_batch);
 
 		batch_amount[batch] = items_to_insert;
 
@@ -686,10 +686,19 @@ int main(int argc, char** argv) {
 
 
 		//launch queries
-		delete_diff[batch] = bulk_delete_timing<key_type>(tcf, dev_keys, short_keys, items_to_insert, misses);
+		delete_diff[batch] = bulk_delete_timing<key_type>(tcf, dev_keys, short_keys, items_to_insert/2, misses);
 
 
 		cudaDeviceSynchronize();
+
+
+		cudaMemcpy(dev_keys, keys + start, items_to_insert*sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+		cudaDeviceSynchronize();
+
+		query_diff[batch] = bulk_query_timing<key_type>(tcf, dev_keys+items_to_insert/2, short_keys, items_to_insert/2, misses);
+
+
 
 
 		//keep some organized spacing

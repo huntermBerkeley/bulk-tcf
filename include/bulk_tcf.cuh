@@ -60,7 +60,7 @@ namespace cg = cooperative_groups;
 
 //preserving this for when I destroy the timeline
 template <typename Filter, typename Key_type>
-__global__ void old_hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_type * keys, uint64_t nvals){
+__global__ void hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_type * keys, uint64_t nvals){
 
 
 	uint64_t tid = threadIdx.x + blockDim.x*blockIdx.x;
@@ -86,8 +86,8 @@ __global__ void old_hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, K
 
 }
 
-
-__global__ void hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_type * keys, uint64_t nvals){
+template <typename Filter, typename Key_type>
+__global__ void new_hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_type * keys, uint64_t nvals){
 
 
 	uint64_t tid = threadIdx.x + blockDim.x*blockIdx.x;
@@ -98,17 +98,21 @@ __global__ void hash_all_key_purge(Filter * my_tcf, uint64_t * large_keys, Key_t
 
 	//shrink the keys
 	//this is valid and preserves query values.
-	keys[tid].set_key(large_keys[tid]);
+
+	key = my_tcf->hash_key(key);
+
+	//need to get leftovers..
+	keys[tid].set_key(my_tcf->get_remainder_from_hash(key));
 
 
 	//uint64_t hashed_key = my_tcf->hash_key(large_keys[tid]);
 
-	key = my_tcf->get_bucket_from_key(key);
+	//key = my_tcf->get_bucket_from_key(key);
 
-	uint64_t new_key = my_tcf->get_reference_from_bucket(key) | keys[tid].get_key();
+	//uint64_t new_key = my_tcf->get_reference_from_bucket(key) | keys[tid].get_key();
 
 	//buckets are now sortable!
-	large_keys[tid] = new_key;
+	large_keys[tid] = key;
 
 
 }
@@ -188,6 +192,7 @@ __global__ void hash_all_key_purge_cycles(Filter * my_tcf, uint64_t * vals, Key_
 	}
 
 }
+
 
 template <typename Filter, typename Key_type>
 __global__ void set_buffers_binary(Filter * my_tcf, uint64_t * references, Key_type * keys, uint64_t nvals){
@@ -286,6 +291,108 @@ __global__ void set_buffers_binary(Filter * my_tcf, uint64_t * references, Key_t
 
 
 }
+
+//new version
+//uses a different space partitioning scheme.
+//hashes should be evenly distributed across ~0ULL space
+template <typename Filter, typename Key_type>
+__global__ void new_set_buffers_binary(Filter * my_tcf, uint64_t * references, Key_type * keys, uint64_t nvals){
+
+
+		// #if DEBUG_ASSERTS
+
+		// assert(assert_sorted(keys, nvals));
+
+		// #endif
+
+
+		uint64_t idx = threadIdx.x + blockDim.x * blockIdx.x;
+
+		if (idx >= my_tcf->num_blocks) return;
+
+		//uint64_t slots_per_lock = VIRTUAL_BUCKETS;
+
+		//since we are finding all boundaries, we only need
+
+		//printf("idx %llu\n", idx);
+
+		//this sounds right? - they divide to go back so I think this is fine
+		//this is fine but need to apply a hash
+		uint64_t boundary = idx; //<< qf->metadata->bits_per_slot;
+
+
+		//This is the code I'm stealing that assumption from
+		//uint64_t hash_bucket_index = hash >> qf->metadata->bits_per_slot;
+		//uint64_t hash_remainder = hash & BITMASK(qf->metadata->bits_per_slot);	
+		//uint64_t lock_index = hash_bucket_index / slots_per_lock;
+
+
+		uint64_t lower = 0;
+		uint64_t upper = nvals ;
+		uint64_t index = upper-lower;
+
+		//upper is non inclusive bound
+
+
+		//if we exceed bounds that's our index
+		while (upper != lower){
+
+
+			index = lower + (upper - lower)/2;
+
+			//((keys[index] >> TAG_BITS)
+			uint64_t bucket = my_tcf->get_bucket_from_hash(references[index]);
+
+
+			if (index != 0)
+			uint64_t old_bucket = my_tcf->get_bucket_from_hash(references[index-1]);
+
+			if (bucket < boundary){
+
+				//false - the list before this point can be removed
+				lower = index+1;
+
+				//jump to a new midpoint
+				
+
+
+			} else if (index==0){
+
+				//will this fix? otherwise need to patch via round up
+				upper = index;
+
+				//(get_bucket_from_reference(references[index-1])
+				//(keys[index-1] >> TAG_BITS)
+
+			} else if (my_tcf->get_bucket_from_hash(references[index-1]) < boundary) {
+
+				//set index! this is the first instance where I am valid and the next isnt
+				//buffers[idx] = keys+index;
+				break;
+
+			} else {
+
+				//we are too far right, all keys to the right do not matter
+				upper = index;
+
+
+			}
+
+		}
+
+		//we either exited or have an edge condition:
+		//upper == lower iff 0 or max key
+		index = lower + (upper - lower)/2;
+
+		//assert(my_tcf->get_bucket_from_hash(keys[index]) <= idx);
+
+
+		my_tcf->buffers[idx] = keys + index;
+		
+
+
+}
+
 
 template <typename Filter, typename Key_type>
 __global__ void set_buffers_binary(Filter * my_tcf, uint64_t * keys, uint64_t nvals){
@@ -927,7 +1034,75 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 
 	__device__ uint64_t get_bucket_from_hash(uint64_t hash){
 
+		//printf("Num blocks is %llu\n", num_blocks);
+
 		const uint64_t dividing_region = (~0ULL)/num_blocks;
+
+		return hash/dividing_region;
+
+	}
+
+	__device__ uint64_t get_remainder_from_hash(uint64_t hash){
+
+		const uint64_t dividing_region = (~0ULL)/num_blocks;
+
+		uint64_t leftover = hash % dividing_region;
+
+		//these are all values not used by the main system. now these need to be split into
+		//key range
+
+
+		const uint64_t key_size = 8ULL*sizeof(Key);
+
+		//need to compress into this many regions
+		const uint64_t key_size_regions = (1ULL << key_size);
+
+		const uint64_t big_dividing_region = (~0ULL)/(num_blocks*key_size_regions);
+
+		if (threadIdx.x+blockIdx.x*blockDim.x == 0){
+			printf("dividing_region %llu, big region %llu\n", dividing_region, big_dividing_region);
+		}
+
+
+		// uint64_t clipped_leftover = (~0ULL ) % dividing_region;
+
+		// if (clipped_leftover > key_size_regions){
+
+		// 	return hash % key_size_regions;
+
+		// } 
+
+
+		//16 bit keys
+		//4 bit remainders
+		//16 buckets
+
+		//dividing region compresses into 16 options
+
+		// so it is 0001-0000-0000-0000
+
+		//after that modulo dividing region gives you 0000-0000-0000
+		//from there, we only want the upper bits
+
+
+		//if clipped is 32 bits,
+		//only need 16
+
+		//if total space is too small, use some bits from above.
+		//uint64_t internal_dividing_region = (~0ULL % dividing_region)/key_size_regions;
+
+		//printf("Leftover is %llu, max leftover is %llu\n", leftover, clipped_leftover);
+
+
+		//Internal dividing region is %llu\n", internal_dividing_region);
+
+		// uint64_t return_val = (hash % dividing_region) >> ();
+
+		// if (return_val >= key_size_regions) printf("Bug: %llu > %llu, %f ratio\n", return_val, key_size_regions, 1.0*return_val/key_size_regions);
+
+		// return hash/dividing_region; // % dividing_region;
+
+
 
 	}
 
@@ -1143,6 +1318,7 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 			buffer_get_primary_count(&block, (int *) &offsets[0], blockID, i, warpID, threadID);
 
 
+
 		}
 
 
@@ -1233,11 +1409,11 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 
 	__host__ __device__ static uint64_t static_get_num_blocks(uint64_t nitems){
 
-	uint64_t num_teams = (nitems - 1)/(BLOCKS_PER_THREAD_BLOCK*block_type::max_size()) + 1;
+	uint64_t ext_num_teams = (nitems - 1)/(BLOCKS_PER_THREAD_BLOCK*block_type::max_size()) + 1;
 
-	uint64_t num_blocks = num_teams*BLOCKS_PER_THREAD_BLOCK;
+	uint64_t ext_num_blocks = ext_num_teams*BLOCKS_PER_THREAD_BLOCK;
 
-	return num_blocks;
+	return ext_num_blocks;
 
 	}
 
@@ -1256,6 +1432,8 @@ struct __attribute__ ((__packed__)) bulk_tcf {
 
 
 		uint64_t global_buffer = blockID * BLOCKS_PER_THREAD_BLOCK + warpID;
+
+		assert(assert_sorted(buffers[global_buffer],buffer_sizes[global_buffer]));
 
 		#if DEBUG_ASSERTS
 
@@ -2710,7 +2888,7 @@ __device__ void dump_all_buffers_into_local_block(thread_team_block<block_type> 
 
 		for (int i = warpID; i < BLOCKS_PER_THREAD_BLOCK; i+=WARPS_PER_BLOCK){
 
-			assert(assert_sorted(output_block.internal_blocks[i].tags,local_block_counters[i]));
+			assert(assert_sorted(output_block->internal_blocks[i].tags,local_block_counters[i]));
 
 		}
 		//let everyone do all checks
@@ -2976,7 +3154,7 @@ __device__ void dump_all_buffers_into_local_block(thread_team_block<block_type> 
 	}
 
 
-	//these bad boys are exact!
+	//these  boys are exact!
 	//__host__ bulk_insert(key_type * keys);
 	
 

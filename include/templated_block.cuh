@@ -564,6 +564,7 @@ struct __attribute__ ((__packed__)) templated_block {
 			if (items[left] == tags[right]){
 
 				found[left] = true;
+
 				tags[right] = 0;
 
 				//delete by setting to 0, and move on
@@ -572,6 +573,7 @@ struct __attribute__ ((__packed__)) templated_block {
 				left++;
 
 				if (left>=nitems) return;
+				
 				if (right>=tag_count){
 
 
@@ -580,6 +582,8 @@ struct __attribute__ ((__packed__)) templated_block {
 					}
 					return;
 				}
+
+
 
 			} else if (items[left] < tags[right]){
 				found[left] = false;
